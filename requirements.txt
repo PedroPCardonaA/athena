@@ -8,4 +8,4 @@ argon2-cffi==23.1.0
 itsdangerous==2.2.0
 python-multipart==0.0.20
 markdown-it-py==3.0.0
-nh3==0.2.20
+nh3==0.3.7
