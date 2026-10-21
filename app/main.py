@@ -2,7 +2,6 @@ import os
 import sqlite3
 from contextlib import asynccontextmanager
 from typing import Literal
-from urllib.parse import urlparse
 
 import nh3
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -12,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, Field, field_validator
 
-from . import auth, bibtex, db
+from . import auth, bibtex, db, service
 
 HERE = os.path.dirname(__file__)
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
@@ -24,6 +23,7 @@ def render_md(text: str) -> str:
 
 
 templates.env.filters["md"] = render_md
+templates.env.filters["domain"] = service.domain
 
 
 @asynccontextmanager
@@ -93,13 +93,6 @@ def page(request, name, s, con, **ctx):
     return templates.TemplateResponse(request, name, {
         "csrf": s["csrf"], "statuses": db.STATUSES, "kinds": db.KINDS, "projects": projects,
         "pnames": {p["id"]: p["name"] for p in projects}, "nav_ideas": db.nav_ideas(con), **ctx})
-
-
-def safe_url(url: str) -> str:
-    u = urlparse(url.strip())
-    if u.scheme not in ("http", "https") or not u.netloc:
-        raise ValueError("url must be http(s)")
-    return url.strip()
 
 
 def opt_int(raw: str, lo=0, hi=10**9, what="value") -> int | None:
@@ -231,7 +224,7 @@ def ui_add_source(iid: int, url: str = Form(..., max_length=2000), title: str = 
                   kind: Literal[db.KINDS] = Form("other"), note: str = Form("", max_length=5000), con=Depends(get_con)):
     _idea_or_404(con, iid)
     try:
-        url = safe_url(url)
+        url = service.safe_url(url)
     except ValueError:
         raise HTTPException(422, "url must be http(s)")
     db.add_source(con, iid, url, title, authors, opt_int(year, 1000, 2100, "year"), kind, note, "user")
@@ -293,13 +286,13 @@ def _project_or_404(con, pid):
 def project_view(request: Request, pid: int, s=Depends(session), con=Depends(get_con)):
     proj = _project_or_404(con, pid)
     return page(request, "project.html", s, con, project=proj, ideas=db.list_ideas(con, project_id=pid),
-                current_project=pid, error=request.query_params.get("error", ""))
+                sources=service.rollup(con, pid), current_project=pid, error=request.query_params.get("error", ""))
 
 
 @app.get("/unsorted")
 def unsorted_view(request: Request, s=Depends(session), con=Depends(get_con)):
     return page(request, "project.html", s, con, project=None, ideas=db.list_ideas(con, project_id=0),
-                current_project=0, error="")
+                sources=[], current_project=0, error="")
 
 
 @app.post("/projects", dependencies=[Depends(csrf)])
@@ -321,6 +314,53 @@ def ui_project_update(pid: int, name: str = Form(..., min_length=1, max_length=8
     except sqlite3.IntegrityError:
         return RedirectResponse(f"/p/{pid}?error=name+already+exists", 303)
     return RedirectResponse(f"/p/{pid}", 303)
+
+
+@app.post("/projects/{pid}/summary", dependencies=[Depends(csrf)])
+def ui_project_summary(pid: int, summary_md: str = Form("", max_length=20_000), con=Depends(get_con)):
+    _project_or_404(con, pid)
+    db.set_project_summary(con, pid, summary_md)
+    return RedirectResponse(f"/p/{pid}", 303)
+
+
+@app.post("/projects/{pid}/sources", dependencies=[Depends(csrf)])
+def ui_project_add_source(pid: int, url: str = Form(..., max_length=2000), title: str = Form("", max_length=500),
+                          authors: str = Form("", max_length=500), year: str = Form(""),
+                          kind: Literal[db.KINDS] = Form("other"), note: str = Form("", max_length=5000),
+                          con=Depends(get_con)):
+    _project_or_404(con, pid)
+    try:
+        service.add_source(con, project_id=pid, url=url, title=title, authors=authors,
+                           year=opt_int(year, 1000, 2100, "year"), kind=kind, note=note)
+    except ValueError:
+        raise HTTPException(422, "url must be http(s)")
+    return RedirectResponse(f"/p/{pid}#sources", 303)
+
+
+@app.post("/project-sources/{sid}/delete", dependencies=[Depends(csrf)])
+def ui_project_del_source(sid: int, con=Depends(get_con)):
+    row = con.execute("SELECT project_id FROM project_sources WHERE id=?", (sid,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    con.execute("DELETE FROM project_sources WHERE id=?", (sid,))
+    con.commit()
+    return RedirectResponse(f"/p/{row['project_id']}#sources", 303)
+
+
+@app.get("/p/{pid}/export.bib")
+def ui_project_bib(pid: int, s=Depends(session), con=Depends(get_con)):
+    _project_or_404(con, pid)
+    rows = [{"id": n, **e} for n, e in enumerate(service.rollup(con, pid), 1)]
+    return PlainTextResponse(bibtex.dump([{**r, "kind": r["kind"]} for r in rows]), headers={
+        "Content-Disposition": f'attachment; filename="project-{pid}.bib"'})
+
+
+@app.post("/p/{pid}/bibtex", dependencies=[Depends(csrf)])
+def ui_project_import_bib(pid: int, bib: str = Form(..., max_length=500_000), con=Depends(get_con)):
+    _project_or_404(con, pid)
+    for src in bibtex.parse(bib):
+        db.add_project_source(con, pid, **src, added_by="user")
+    return RedirectResponse(f"/p/{pid}#sources", 303)
 
 
 @app.post("/projects/{pid}/delete", dependencies=[Depends(csrf)])
@@ -352,45 +392,12 @@ async def ui_import(file: UploadFile = File(...), con=Depends(get_con)):
     return RedirectResponse("/", 303)
 
 
-def _tokens(con):
-    return con.execute("SELECT id,name,scope,last_used FROM api_tokens ORDER BY id").fetchall()
-
-
 @app.get("/settings")
 def settings_page(request: Request, s=Depends(session), con=Depends(get_con)):
-    return page(request, "settings.html", s, con, tokens=_tokens(con), new_token=None, current_project=None)
+    return page(request, "settings.html", s, con, current_project=None)
 
 
-@app.get("/tokens")
-def tokens_redirect():
-    return RedirectResponse("/settings", 301)
-
-
-@app.post("/tokens", dependencies=[Depends(csrf)])
-def tokens_create(request: Request, name: str = Form(..., min_length=1, max_length=80),
-                  scope: Literal["read", "write"] = Form("write"), s=Depends(session), con=Depends(get_con)):
-    tok = auth.create_token(con, name.strip(), scope)
-    return page(request, "settings.html", s, con, tokens=_tokens(con), new_token=tok, current_project=None)
-
-
-@app.post("/tokens/{tid}/delete", dependencies=[Depends(csrf)])
-def tokens_delete(tid: int, con=Depends(get_con)):
-    con.execute("DELETE FROM api_tokens WHERE id=?", (tid,))
-    con.commit()
-    return RedirectResponse("/settings", 303)
-
-
-# ---------- REST API (bearer token) ----------
-
-def api_auth(request: Request, con=Depends(get_con)):
-    h = request.headers.get("authorization", "")
-    tok = auth.lookup_token(con, h[7:]) if h.lower().startswith("bearer ") else None
-    if not tok:
-        raise HTTPException(401, "invalid token", headers={"WWW-Authenticate": "Bearer"})
-    if request.method not in ("GET", "HEAD") and tok["scope"] != "write":
-        raise HTTPException(403, "read-only token")
-    return tok
-
+# ---------- import/export models ----------
 
 class IdeaIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
@@ -398,16 +405,6 @@ class IdeaIn(BaseModel):
     body_md: str = Field("", max_length=100_000)
     status: Literal[db.STATUSES] = "seed"
     tags: str = Field("", max_length=300)
-    project_id: int | None = Field(None, ge=0)
-
-
-class IdeaPatch(BaseModel):
-    title: str | None = Field(None, min_length=1, max_length=300)
-    summary: str | None = Field(None, max_length=2000)
-    body_md: str | None = Field(None, max_length=100_000)
-    status: Literal[db.STATUSES] | None = None
-    tags: str | None = Field(None, max_length=300)
-    project_id: int | None = Field(None, ge=0)  # 0 = move to Unsorted
 
 
 class ProjectIn(BaseModel):
@@ -426,7 +423,7 @@ class SourceIn(BaseModel):
     @field_validator("url")
     @classmethod
     def _http_only(cls, v):
-        return safe_url(v)
+        return service.safe_url(v)
 
 
 class NoteIn(BaseModel):
@@ -445,6 +442,8 @@ class ExportNote(NoteIn):
 
 class ExportProject(ProjectIn):
     created_at: str = Field(max_length=40)
+    summary_md: str = Field("", max_length=20_000)
+    sources: list[ExportSource] = []
 
 
 class ExportIdea(IdeaIn):
@@ -459,66 +458,3 @@ class ExportIn(BaseModel):
     version: Literal[1]
     projects: list[ExportProject] = []  # absent in v0.1.x exports
     ideas: list[ExportIdea]
-
-
-def _d(rows):
-    return [dict(r) for r in rows]
-
-
-@app.get("/api/export", dependencies=[Depends(api_auth)])
-def api_export(con=Depends(get_con)):
-    return db.export_all(con)
-
-
-@app.get("/api/projects", dependencies=[Depends(api_auth)])
-def api_projects(con=Depends(get_con)):
-    return _d(db.list_projects(con))
-
-
-@app.post("/api/projects", status_code=201, dependencies=[Depends(api_auth)])
-def api_project_create(body: ProjectIn, con=Depends(get_con)):
-    try:
-        return {"id": db.create_project(con, body.name.strip(), body.description)}
-    except sqlite3.IntegrityError:
-        raise HTTPException(409, "a project with that name already exists")
-
-
-@app.get("/api/ideas", dependencies=[Depends(api_auth)])
-def api_list(q: str = "", status: str = "", project_id: int | None = None, con=Depends(get_con)):
-    return _d(db.list_ideas(con, q[:200], status, project_id))
-
-
-@app.post("/api/ideas", status_code=201, dependencies=[Depends(api_auth)])
-def api_create(body: IdeaIn, con=Depends(get_con)):
-    data = body.model_dump()
-    data["project_id"] = project_id_or_422(con, data["project_id"])
-    return {"id": db.create_idea(con, **data)}
-
-
-@app.get("/api/ideas/{iid}", dependencies=[Depends(api_auth)])
-def api_get(iid: int, con=Depends(get_con)):
-    idea = _idea_or_404(con, iid)
-    return {**dict(idea), "sources": _d(db.sources_of(con, iid)), "notes": _d(db.notes_of(con, iid))}
-
-
-@app.patch("/api/ideas/{iid}", dependencies=[Depends(api_auth)])
-def api_patch(iid: int, body: IdeaPatch, con=Depends(get_con)):
-    _idea_or_404(con, iid)
-    data = body.model_dump()
-    if data["project_id"]:
-        project_id_or_422(con, data["project_id"])
-    db.update_idea(con, iid, **data)
-    return {"ok": True}
-
-
-@app.post("/api/ideas/{iid}/sources", status_code=201, dependencies=[Depends(api_auth)])
-def api_add_source(iid: int, body: SourceIn, con=Depends(get_con)):
-    _idea_or_404(con, iid)
-    sid, created = db.add_source(con, iid, **body.model_dump(), added_by="agent")
-    return JSONResponse({"id": sid, "created": created}, status_code=201 if created else 200)
-
-
-@app.post("/api/ideas/{iid}/notes", status_code=201, dependencies=[Depends(api_auth)])
-def api_add_note(iid: int, body: NoteIn, con=Depends(get_con)):
-    _idea_or_404(con, iid)
-    return {"id": db.add_note(con, iid, body.body_md, body.kind)}

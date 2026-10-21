@@ -71,6 +71,24 @@ CREATE TABLE projects(
 ALTER TABLE ideas ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;
 CREATE INDEX ideas_project ON ideas(project_id);
 """,
+"""
+CREATE TABLE project_sources(
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  authors TEXT NOT NULL DEFAULT '',
+  year INTEGER,
+  kind TEXT NOT NULL DEFAULT 'other',
+  note TEXT NOT NULL DEFAULT '',
+  added_by TEXT NOT NULL DEFAULT 'user',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(project_id, url)
+);
+ALTER TABLE projects ADD COLUMN summary_md TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN summary_updated_at TEXT;
+DROP TABLE api_tokens;
+""",
 ]
 
 
@@ -223,6 +241,30 @@ def add_source(con, idea_id, url, title="", authors="", year=None, kind="other",
     return row["id"], False
 
 
+def project_sources_of(con, project_id):
+    return con.execute(
+        "SELECT * FROM project_sources WHERE project_id=? ORDER BY created_at DESC, id DESC", (project_id,)
+    ).fetchall()
+
+
+def add_project_source(con, project_id, url, title="", authors="", year=None, kind="other", note="", added_by="user"):
+    """Returns (id, created). Existing url for the project is left untouched."""
+    cur = con.execute(
+        "INSERT OR IGNORE INTO project_sources(project_id,url,title,authors,year,kind,note,added_by) VALUES(?,?,?,?,?,?,?,?)",
+        (project_id, url, title, authors, year, kind, note, added_by),
+    )
+    con.commit()
+    if cur.rowcount:
+        return cur.lastrowid, True
+    row = con.execute("SELECT id FROM project_sources WHERE project_id=? AND url=?", (project_id, url)).fetchone()
+    return row["id"], False
+
+
+def set_project_summary(con, project_id, summary_md):
+    con.execute("UPDATE projects SET summary_md=?, summary_updated_at=CURRENT_TIMESTAMP WHERE id=?", (summary_md, project_id))
+    con.commit()
+
+
 def add_note(con, idea_id, body_md, kind="user"):
     cur = con.execute("INSERT INTO notes(idea_id,kind,body_md) VALUES(?,?,?)", (idea_id, kind, body_md))
     con.execute("UPDATE ideas SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (idea_id,))
@@ -235,8 +277,14 @@ EXPORT_VERSION = 1
 
 def export_all(con):
     ideas = []
-    projects = [{k: p[k] for k in ("name", "description", "created_at")}
-                for p in con.execute("SELECT * FROM projects ORDER BY id")]
+    projects = []
+    for p in con.execute("SELECT * FROM projects ORDER BY id"):
+        d = {k: p[k] for k in ("name", "description", "summary_md", "created_at")}
+        d["sources"] = [
+            {k: r[k] for k in ("url", "title", "authors", "year", "kind", "note", "added_by", "created_at")}
+            for r in con.execute("SELECT * FROM project_sources WHERE project_id=? ORDER BY id", (p["id"],))
+        ]
+        projects.append(d)
     names = {p["id"]: p["name"] for p in con.execute("SELECT id,name FROM projects")}
     for i in con.execute("SELECT * FROM ideas ORDER BY id"):
         d = {k: i[k] for k in ("title", "summary", "body_md", "status", "tags", "created_at", "updated_at")}
@@ -260,8 +308,15 @@ def import_all(con, data):
     try:
         ids = {}
         for p in data.get("projects", []):
-            con.execute("INSERT OR IGNORE INTO projects(name,description,created_at) VALUES(?,?,?)",
-                        (p["name"], p["description"], p["created_at"]))
+            con.execute(
+                "INSERT OR IGNORE INTO projects(name,description,summary_md,created_at) VALUES(?,?,?,?)",
+                (p["name"], p["description"], p.get("summary_md", ""), p["created_at"]))
+            pid = con.execute("SELECT id FROM projects WHERE name=?", (p["name"],)).fetchone()["id"]
+            ids[p["name"]] = pid
+            for r in p.get("sources", []):
+                con.execute(
+                    "INSERT OR IGNORE INTO project_sources(project_id,url,title,authors,year,kind,note,added_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (pid, r["url"], r["title"], r["authors"], r["year"], r["kind"], r["note"], r["added_by"], r["created_at"]))
         for r in con.execute("SELECT id,name FROM projects"):
             ids[r["name"]] = r["id"]
         for d in data["ideas"]:

@@ -230,3 +230,15 @@ pre.token { background: var(--panel); border: 1px solid var(--bd); border-radius
 .auth-card p { color: var(--mut); }
 .auth-card form { text-align: left; margin-top: 1rem; }
 .auth-card button { width: 100%; margin-top: .5rem; }
+
+/* ---------- sources, links, commands ---------- */
+.src .ext { color: var(--ac); }
+.src .ext:hover { text-decoration: underline; }
+.ext-icon { opacity: .7; font-weight: 400; }
+.domain { font-family: var(--mono); font-size: .75rem; color: var(--mut); }
+.src { transition: border-color .12s; }
+.src:hover { border-color: var(--ac); }
+.h3 { font-size: .9rem; margin: 1.1rem 0 .35rem; color: var(--mut); font-weight: 600; }
+.cmd { display: flex; gap: .5rem; align-items: flex-start; }
+.cmd pre { flex: 1; margin: 0; background: var(--panel); border: 1px solid var(--bd); border-radius: 10px; padding: .6rem .8rem; overflow-x: auto; font: .85rem/1.5 var(--mono); }
+code { font-family: var(--mono); font-size: .88em; background: var(--panel); padding: .1em .35em; border-radius: 5px; }

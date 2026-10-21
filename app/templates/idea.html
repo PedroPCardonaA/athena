@@ -27,8 +27,8 @@
 <div class="rows">
 {% for s in sources %}
 <div class="src">
-  <a class="t" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}</a>
-  <div class="meta"><span class="chip kind">{{ s.kind }}</span>
+  <a class="t ext" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}<span class="ext-icon" aria-hidden="true"> ↗</span></a>
+  <div class="meta"><span class="domain">{{ s.url | domain }}</span><span class="chip kind">{{ s.kind }}</span>
     {% if s.added_by == 'agent' %}<span class="chip agent">agent</span>{% endif %}
     {% if s.authors %}<span>{{ s.authors }}</span>{% endif %}{% if s.year %}<span>· {{ s.year }}</span>{% endif %}
     <form method="post" action="/sources/{{ s.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">remove</button></form></div>

@@ -23,3 +23,14 @@
   </div>
 </form>
 {% endmacro %}
+
+{% macro source_row(s, csrf) %}
+<div class="src">
+  <a class="t ext" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}<span class="ext-icon" aria-hidden="true"> ↗</span></a>
+  <div class="meta"><span class="domain">{{ s.domain }}</span><span class="chip kind">{{ s.kind }}</span>
+    {% if s.direct %}<span class="chip">project</span>{% endif %}{% if s.agent %}<span class="chip agent">agent</span>{% endif %}
+    {% if s.authors %}<span>{{ s.authors }}</span>{% endif %}{% if s.year %}<span>· {{ s.year }}</span>{% endif %}</div>
+  {% if s.note %}<div class="n">{{ s.note }}</div>{% endif %}
+  {% if s.cited_by %}<div class="meta">cited in {% for c in s.cited_by %}<a class="chip tag" href="/ideas/{{ c.id }}">{{ c.title }}</a>{% endfor %}</div>{% endif %}
+</div>
+{% endmacro %}

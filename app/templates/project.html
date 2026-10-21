@@ -1,4 +1,5 @@
-{% extends "base.html" %}{% block title %}{{ project.name if project else 'Unsorted' }} · Athena{% endblock %}{% block body %}
+{% extends "base.html" %}
+{% from "_macros.html" import source_row %}{% block title %}{{ project.name if project else 'Unsorted' }} · Athena{% endblock %}{% block body %}
 <div class="crumbs"><a href="/">Athena</a> / Projects</div>
 <div class="proj-head">
   <h1 class="page-title">{{ project.name if project else 'Unsorted' }}</h1>
@@ -7,6 +8,18 @@
 </div>
 {% if error %}<p class="err">{{ error }}</p>{% endif %}
 
+{% if project %}
+<h2>Overview</h2>
+{% if project.summary_md %}
+<div class="prose">{{ project.summary_md | md | safe }}</div>
+<p><small>Summary updated {{ (project.summary_updated_at or '')[:16] }}</small></p>
+{% else %}<div class="empty">No summary yet. Ask your agent to run <code>summarize_project</code>, or write one below.</div>{% endif %}
+<details class="panel"><summary>Edit summary</summary>
+<form method="post" action="/projects/{{ project.id }}/summary"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label class="field">Summary (Markdown) <textarea name="summary_md" rows="8" maxlength="20000">{{ project.summary_md }}</textarea></label>
+<button>Save summary</button></form></details>
+{% endif %}
+
 {{ composer(csrf, projects, statuses, current_project) }}
 
 <div class="section-head"><h2>Ideas <span class="count">{{ ideas | length }}</span></h2></div>
@@ -14,6 +27,30 @@
 {% for i in ideas %}{{ idea_card(i, pnames) }}
 {% else %}<div class="empty">No ideas here yet.</div>{% endfor %}
 </div>
+
+{% if project %}
+<div class="section-head" id="sources"><h2>Sources &amp; citations <span class="count">{{ sources | length }}</span></h2>
+  {% if sources %}<a class="pill" href="/p/{{ project.id }}/export.bib">Download .bib</a>{% endif %}</div>
+<div class="rows">
+{% for s in sources %}{{ source_row(s, csrf) }}
+{% else %}<div class="empty">No sources yet. Add citations here or inside any idea; they all show up in this list.</div>{% endfor %}
+</div>
+<details class="panel"><summary>Add source to project</summary>
+<form method="post" action="/projects/{{ project.id }}/sources">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="field">URL <input type="url" name="url" required maxlength="2000" placeholder="https://"></label>
+  <label class="field">Title <input name="title" maxlength="500"></label>
+  <div class="row"><label class="field">Authors <input name="authors" maxlength="500"></label>
+    <label class="field">Year <input type="number" name="year" min="1000" max="2100"></label>
+    <label class="field">Kind <select name="kind">{% for k in kinds %}<option>{{ k }}</option>{% endfor %}</select></label></div>
+  <label class="field">Why it is relevant <textarea name="note" rows="2" maxlength="5000"></textarea></label>
+  <button>Add source</button>
+</form></details>
+<details class="panel"><summary>Import BibTeX</summary>
+<form method="post" action="/p/{{ project.id }}/bibtex"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label class="field">Entries (need a url or doi) <textarea name="bib" rows="5" required maxlength="500000"></textarea></label>
+<button>Import</button></form></details>
+{% endif %}
 
 {% if project %}
 <details class="panel"><summary>Edit project</summary>

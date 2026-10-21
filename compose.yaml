@@ -3,6 +3,7 @@ name: athena
 services:
   athena:
     image: ghcr.io/pedropcardonaa/athena:latest
+    container_name: athena
     ports:
       - "127.0.0.1:8787:8787"   # localhost only; do not expose without TLS + a reverse proxy
     volumes:

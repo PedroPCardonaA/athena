@@ -36,28 +36,6 @@ def test_csrf_and_xss(client):
     assert "<img src=x" not in t and "onerror=" not in t.replace("&lt;img src=x onerror=", "") and 'href="javascript' not in t
 
 
-def test_api_flow(client):
-    csrf = login(client)
-    wr = client.post("/tokens", data={"name": "agent", "scope": "write", "csrf": csrf}).text.split('<pre class="token">')[1].split("</pre>")[0]
-    rd = client.post("/tokens", data={"name": "ro", "scope": "read", "csrf": csrf}).text.split('<pre class="token">')[1].split("</pre>")[0]
-    client.cookies.clear()
-    H = lambda t: {"Authorization": f"Bearer {t}"}
-    assert client.get("/api/ideas").status_code == 401
-    assert client.get("/api/ideas", headers=H("bad")).status_code == 401
-    assert client.post("/api/ideas", json={"title": "t"}, headers=H(rd)).status_code == 403
-    iid = client.post("/api/ideas", json={"title": "graph nets", "body_md": "retrieval"}, headers=H(wr)).json()["id"]
-    src = {"url": "https://arxiv.org/abs/1", "title": "P", "kind": "paper", "year": 2024}
-    assert client.post(f"/api/ideas/{iid}/sources", json=src, headers=H(wr)).status_code == 201
-    assert client.post(f"/api/ideas/{iid}/sources", json=src, headers=H(wr)).json()["created"] is False
-    assert client.post(f"/api/ideas/{iid}/sources", json={"url": "javascript:alert(1)"}, headers=H(wr)).status_code == 422
-    assert client.post(f"/api/ideas/{iid}/notes", json={"body_md": "# r"}, headers=H(wr)).status_code == 201
-    g = client.get(f"/api/ideas/{iid}", headers=H(rd)).json()
-    assert len(g["sources"]) == 1 and g["sources"][0]["added_by"] == "agent" and len(g["notes"]) == 1
-    assert len(client.get("/api/ideas?q=retrieval", headers=H(rd)).json()) == 1
-    assert client.get('/api/ideas?q="NEAR(', headers=H(rd)).status_code == 200
-    client.patch(f"/api/ideas/{iid}", json={"title": "renamed"}, headers=H(wr))
-    assert client.get("/api/ideas?q=renamed", headers=H(rd)).json()[0]["id"] == iid
-
 
 def test_setup_flow(tmp_path, monkeypatch):
     monkeypatch.delenv("ATHENA_ADMIN_PASSWORD")
@@ -174,39 +152,6 @@ def test_projects_ui(client):
     assert client.get("/p/1").status_code == 404 and "in project" in main_of(client, "/unsorted")
 
 
-def test_projects_api_and_export(client, tmp_path):
-    csrf = login(client)
-    tok = client.post("/tokens", data={"name": "a", "scope": "write", "csrf": csrf}).text.split('<pre class="token">')[1].split("</pre>")[0]
-    H = {"Authorization": f"Bearer {tok}"}
-    pid = client.post("/api/projects", json={"name": "P"}, headers=H).json()["id"]
-    assert client.post("/api/projects", json={"name": "P"}, headers=H).status_code == 409
-    a = client.post("/api/ideas", json={"title": "a", "project_id": pid}, headers=H).json()["id"]
-    b = client.post("/api/ideas", json={"title": "b"}, headers=H).json()["id"]
-    assert client.post("/api/ideas", json={"title": "c", "project_id": 99}, headers=H).status_code == 422
-    assert [i["id"] for i in client.get(f"/api/ideas?project_id={pid}", headers=H).json()] == [a]
-    assert [i["id"] for i in client.get("/api/ideas?project_id=0", headers=H).json()] == [b]
-    client.patch(f"/api/ideas/{b}", json={"project_id": pid}, headers=H)
-    assert len(client.get(f"/api/ideas?project_id={pid}", headers=H).json()) == 2
-    client.patch(f"/api/ideas/{b}", json={"project_id": 0}, headers=H)
-    assert client.get(f"/api/ideas/{b}", headers=H).json()["project_id"] is None
-    assert client.get("/api/projects", headers=H).json()[0]["n"] == 1
-
-    exp = client.get("/api/export", headers=H).json()
-    assert exp["projects"][0]["name"] == "P" and {i["title"]: i["project"] for i in exp["ideas"]} == {"a": "P", "b": None}
-    import json
-    app.state.db_path = str(tmp_path / "other.db")
-    auth._attempts.clear()
-    with TestClient(app) as c2:
-        csrf2 = login(c2)
-        up = lambda payload: c2.post("/import", data={"csrf": csrf2}, files={"file": ("e.json", payload, "application/json")}, follow_redirects=False)
-        assert up(json.dumps(exp).encode()).status_code == 303
-        assert "/ideas/1" in main_of(c2, "/p/1")
-        # export from v0.1.x had no "projects" key and no "project" per idea
-        old = {"version": 1, "ideas": [{k: v for k, v in i.items() if k not in ("project", "project_id")} for i in exp["ideas"]]}
-        old["ideas"][0]["title"] = "old-style"
-        assert up(json.dumps(old).encode()).status_code == 303
-        assert "old-style" in main_of(c2, "/unsorted")
-
 
 def test_migration_v2_to_v3_keeps_data(tmp_path):
     import sqlite3
@@ -221,3 +166,96 @@ def test_migration_v2_to_v3_keeps_data(tmp_path):
     assert con.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS) >= 3
     row = con.execute("SELECT title, project_id FROM ideas").fetchone()
     assert row["title"] == "survivor" and row["project_id"] is None
+
+
+def test_project_sources_ui_and_rollup(client):
+    from app import service
+    csrf = login(client)
+    client.post("/projects", data={"name": "Thesis", "csrf": csrf})
+    client.post("/ideas", data={"title": "Idea A", "project_id": "1", "csrf": csrf})
+    client.post("/ideas", data={"title": "Idea B", "project_id": "1", "csrf": csrf})
+    # same URL cited by both ideas + directly by the project
+    for iid in (1, 2):
+        client.post(f"/ideas/{iid}/sources", data={"url": "https://arxiv.org/abs/1706.03762", "title": "Attention", "csrf": csrf})
+    client.post("/ideas/2/sources", data={"url": "https://example.org/only-b", "csrf": csrf})
+    r = client.post("/projects/1/sources", data={"url": "https://arxiv.org/abs/1706.03762", "year": "", "csrf": csrf}, follow_redirects=False)
+    assert r.status_code == 303
+    client.post("/projects/1/sources", data={"url": "https://doi.org/10.1/x", "title": "Direct", "year": "2021", "csrf": csrf})
+    assert client.post("/projects/1/sources", data={"url": "javascript:alert(1)", "csrf": csrf}).status_code == 422
+    assert client.post("/projects/1/sources", data={"url": "https://a.org"}).status_code == 403  # csrf
+
+    con = db.connect(app.state.db_path)
+    rows = {r["url"]: r for r in service.rollup(con, 1)}
+    assert len(rows) == 3
+    att = rows["https://arxiv.org/abs/1706.03762"]
+    assert att["direct"] and att["title"] == "Attention" and att["kind"] == "other" and {c["id"] for c in att["cited_by"]} == {1, 2}
+    assert rows["https://example.org/only-b"]["cited_by"][0]["title"] == "Idea B" and not rows["https://example.org/only-b"]["direct"]
+
+    main = main_of(client, "/p/1")
+    assert 'href="https://arxiv.org/abs/1706.03762"' in main and 'target="_blank"' in main and "noopener" in main
+    assert "arxiv.org" in main and "doi.org" in main and "Idea B" in main
+    bib = client.get("/p/1/export.bib")
+    assert bib.text.count("@") == 3
+    client.post("/p/1/bibtex", data={"bib": "@article{k, title={T}, url={https://new.org/p}, year={2022}}", "csrf": csrf})
+    assert "https://new.org/p" in main_of(client, "/p/1")
+    client.post("/projects/1/summary", data={"summary_md": "## Goal\nShip **it**", "csrf": csrf})
+    assert "<strong>it</strong>" in main_of(client, "/p/1")
+    client.post("/project-sources/1/delete", data={"csrf": csrf})
+    assert len(service.rollup(db.connect(app.state.db_path), 1)) == 4
+
+
+def test_rollup_prefers_richer_metadata(client):
+    from app import service
+    csrf = login(client)
+    client.post("/projects", data={"name": "P", "csrf": csrf})
+    client.post("/ideas", data={"title": "A", "project_id": "1", "csrf": csrf})
+    client.post("/ideas/1/sources", data={"url": "https://x.org/p", "title": "Full Paper Title", "kind": "paper", "year": "2020", "csrf": csrf})
+    client.post("/projects/1/sources", data={"url": "https://x.org/p", "title": "x", "csrf": csrf})
+    row = service.rollup(db.connect(app.state.db_path), 1)[0]
+    assert row["title"] == "Full Paper Title" and row["kind"] == "paper" and row["year"] == 2020
+
+
+def test_export_import_roundtrip_with_project_data(client, tmp_path):
+    import json
+    csrf = login(client)
+    client.post("/projects", data={"name": "P", "csrf": csrf})
+    client.post("/projects/1/sources", data={"url": "https://p.org/1", "title": "PS", "csrf": csrf})
+    client.post("/projects/1/summary", data={"summary_md": "sum", "csrf": csrf})
+    client.post("/ideas", data={"title": "a", "project_id": "1", "csrf": csrf})
+    exp = client.get("/export.json").json()
+    assert exp["projects"][0]["summary_md"] == "sum" and exp["projects"][0]["sources"][0]["url"] == "https://p.org/1"
+    app.state.db_path = str(tmp_path / "other.db")
+    auth._attempts.clear()
+    with TestClient(app) as c2:
+        csrf2 = login(c2)
+        up = lambda payload: c2.post("/import", data={"csrf": csrf2}, files={"file": ("e.json", payload, "application/json")}, follow_redirects=False)
+        assert up(json.dumps(exp).encode()).status_code == 303
+        assert up(json.dumps(exp).encode()).status_code == 303  # idempotent
+        assert c2.get("/export.json").json()["projects"] == exp["projects"]
+        # an export from before project sources existed
+        old = {"version": 1, "projects": [{"name": "Old", "description": "", "created_at": "2024-01-01 00:00:00"}], "ideas": []}
+        assert up(json.dumps(old).encode()).status_code == 303
+
+
+def test_migration_v3_to_v4_drops_tokens_keeps_data(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "v3.db")
+    old = sqlite3.connect(path)
+    for m in db.MIGRATIONS[:3]:
+        old.executescript(m)
+    old.execute("PRAGMA user_version=3")
+    old.execute("INSERT INTO api_tokens(name,hash,scope) VALUES('t','h','write')")
+    old.execute("INSERT INTO projects(name) VALUES('keep')")
+    old.commit(); old.close()
+    con = db.connect(path)
+    assert con.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
+    assert con.execute("SELECT name, summary_md FROM projects").fetchone()["name"] == "keep"
+    assert not con.execute("SELECT 1 FROM sqlite_master WHERE name='api_tokens'").fetchone()
+    assert con.execute("SELECT 1 FROM sqlite_master WHERE name='project_sources'").fetchone()
+
+
+def test_rest_api_and_tokens_are_gone(client):
+    csrf = login(client)
+    assert client.get("/api/ideas").status_code == 404
+    assert client.post("/tokens", data={"name": "x", "csrf": csrf}).status_code in (404, 405)
+    assert "mcp add athena" in client.get("/settings").text

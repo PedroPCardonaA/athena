@@ -6,6 +6,7 @@ services:
       context: .
       dockerfile: Containerfile
     image: localhost/athena:dev
+    container_name: athena
     ports:
       - "127.0.0.1:8787:8787"   # localhost only; do not expose without TLS + a reverse proxy
     volumes:

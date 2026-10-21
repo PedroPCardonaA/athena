@@ -1,24 +1,20 @@
 {% extends "base.html" %}{% block title %}Settings · Athena{% endblock %}{% block body %}
 <h1 class="page-title">Settings</h1>
 
-<h2>Agent access</h2>
-<p>API tokens let an agent read and add to your ideas. Use a <b>write</b> token for research; <b>read</b> tokens cannot change anything.</p>
-{% if new_token %}<div class="notice"><p>Copy this token now. It will not be shown again:</p><pre class="token">{{ new_token }}</pre></div>{% endif %}
-<div class="rows">
-{% for t in tokens %}
-<div class="src"><div class="t">{{ t.name }}</div>
-  <div class="meta"><span class="chip">{{ t.scope }}</span><span>last used: {{ t.last_used or 'never' }}</span>
-  <form method="post" action="/tokens/{{ t.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">revoke</button></form></div></div>
-{% else %}<div class="empty">No tokens yet.</div>{% endfor %}
-</div>
-<details class="panel"><summary>Create token</summary>
-<form method="post" action="/tokens"><input type="hidden" name="csrf" value="{{ csrf }}">
-<div class="row"><label class="field">Name <input name="name" required maxlength="80" placeholder="research agent"></label>
-<label class="field">Scope <select name="scope"><option>write</option><option>read</option></select></label></div>
-<button>Create token</button></form></details>
+<h2>Connect an AI agent (MCP)</h2>
+<p>Athena speaks the Model Context Protocol, so agents can read your projects and ideas, add sources, and write summaries. There are no tokens: the agent runs a small command inside your local container.</p>
+
+<h3 class="h3">Claude Code</h3>
+<div class="cmd"><pre>claude mcp add athena -- podman exec -i athena python -m app.athena_mcp</pre><button type="button" class="ghost" data-copy>Copy</button></div>
+<h3 class="h3">Codex</h3>
+<div class="cmd"><pre>codex mcp add athena -- podman exec -i athena python -m app.athena_mcp</pre><button type="button" class="ghost" data-copy>Copy</button></div>
+<h3 class="h3">Cursor, Windsurf, Gemini CLI, Claude Desktop (JSON)</h3>
+<div class="cmd"><pre>{"mcpServers": {"athena": {"command": "podman",
+  "args": ["exec", "-i", "athena", "python", "-m", "app.athena_mcp"]}}}</pre><button type="button" class="ghost" data-copy>Copy</button></div>
+<p><small>Read-only access: append <code>--read-only</code> to the command so the agent cannot change anything. Prompts such as <code>research_idea</code>, <code>summarize_project</code> and <code>improve_idea</code> appear in clients that support MCP prompts (in Claude Code: type <code>/mcp__athena__</code>).</small></p>
 
 <h2>Backup</h2>
-<p><a href="/export.json">Export everything (JSON)</a> — ideas, projects, sources and notes.</p>
+<p><a href="/export.json">Export everything (JSON)</a> — projects, ideas, sources and notes.</p>
 <form method="post" action="/import" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{ csrf }}">
 <label class="field">Import an export file <input type="file" name="file" accept="application/json" required></label>
 <button class="ghost">Import</button></form>

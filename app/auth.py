@@ -86,18 +86,3 @@ def read_session(con, cookie: str | None):
 
 def csrf_ok(session, token: str) -> bool:
     return bool(session) and hmac.compare_digest(session["csrf"], token or "")
-
-
-def create_token(con, name: str, scope: str) -> str:
-    tok = "ath_" + secrets.token_urlsafe(32)
-    con.execute("INSERT INTO api_tokens(name,hash,scope) VALUES(?,?,?)", (name, db.hash_token(tok), scope))
-    con.commit()
-    return tok
-
-
-def lookup_token(con, tok: str):
-    row = con.execute("SELECT * FROM api_tokens WHERE hash=?", (db.hash_token(tok),)).fetchone()
-    if row:
-        con.execute("UPDATE api_tokens SET last_used=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
-        con.commit()
-    return row

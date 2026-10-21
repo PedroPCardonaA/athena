@@ -38,6 +38,16 @@
       }
     });
 
+    document.querySelectorAll("[data-copy]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var pre = b.parentNode.querySelector("pre");
+        if (!pre || !navigator.clipboard) return;
+        navigator.clipboard.writeText(pre.textContent).then(function () {
+          b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500);
+        });
+      });
+    });
+
     if (location.hash === "#new") {
       var t = document.querySelector("#new [name=title]");
       if (t) t.focus();

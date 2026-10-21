@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot local install: start the container, then optionally wire up the agent skill.
+# One-shot local install: start the container, then optionally connect your AI agent over MCP.
 set -euo pipefail
 cd "$(dirname "$0")"
 URL="http://127.0.0.1:8787"
@@ -19,15 +19,15 @@ curl -fs "$URL/healthz" >/dev/null || { echo; echo "App did not become healthy; 
 echo " up."
 echo "1) Open $URL and choose your password."
 
-read -r -p "Install the Claude Code research skill? [y/N] " yn || yn=n
-if [[ "$yn" =~ ^[Yy]$ ]]; then
-  mkdir -p ~/.claude/skills ~/.config/athena
-  cp -r skill/research-idea ~/.claude/skills/
-  echo "2) In the UI go to 'API tokens' and create a write token, then paste it here."
-  read -r -s -p "Token (hidden): " tok; echo
-  if [[ -n "$tok" ]]; then
-    umask 077
-    printf '{"url": "%s", "token": "%s"}\n' "$URL" "$tok" > ~/.config/athena/config
-    echo "Saved ~/.config/athena/config (mode 600). Try: research idea 1"
+CMD=(podman exec -i athena python -m app.athena_mcp)
+echo
+echo "2) Connect an AI agent (no tokens needed):"
+echo "     claude mcp add athena -- ${CMD[*]}"
+echo "     codex mcp add athena -- ${CMD[*]}"
+echo "   Other clients: see docs/mcp.md. Add --read-only for view-only access."
+for tool in claude codex; do
+  if command -v "$tool" >/dev/null; then
+    read -r -p "Add Athena to $tool now? [y/N] " yn || yn=n
+    [[ "$yn" =~ ^[Yy]$ ]] && "$tool" mcp add athena -- "${CMD[@]}"
   fi
-fi
+done

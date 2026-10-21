@@ -6,10 +6,11 @@ A tiny, private vault for your PhD/research ideas, the sources behind each idea,
 
 - **Organised**: group ideas into projects; status, tags, full-text search; a ChatGPT/Claude-style sidebar UI with light and dark themes.
 - **Local and single-user**: runs in a rootless podman container, bound to `127.0.0.1`. Your data is one SQLite file in `./data`.
-- **Simple**: FastAPI + SQLite, server-rendered, no JavaScript, no build step, 8 small dependencies.
+- **Simple**: FastAPI + SQLite, server-rendered, no JavaScript, no build step, a handful of dependencies.
 - **Secure by default**: read-only container, no capabilities, argon2 password, CSRF, strict CSP. See [SECURITY.md](SECURITY.md).
 - **Yours**: full JSON export/import, BibTeX export/import, `make backup`.
-- **Agent-friendly**: scoped HTTP API ([docs/api.md](docs/api.md)), works with any agent ([AGENTS.md](AGENTS.md)); a Claude Code skill is included.
+- **Agent-friendly**: a full MCP server (read, add, change; summarize and improve prompts) that installs with one command ([docs/mcp.md](docs/mcp.md), [AGENTS.md](AGENTS.md)).
+- **Citations everywhere**: sources per idea and per project; a project page rolls them all up with clickable links, BibTeX in/out.
 
 ## Quickstart
 Requires `podman` and `podman-compose`.
@@ -17,14 +18,19 @@ Requires `podman` and `podman-compose`.
 git clone https://github.com/PedroPCardonaA/athena && cd athena
 ./setup.sh
 ```
-Open http://127.0.0.1:8787 and choose a password (first run only). `setup.sh` can also install the research skill.
+Open http://127.0.0.1:8787 and choose a password (first run only). `setup.sh` can also connect your AI agent.
 
 Manual: `make up` (uses the prebuilt image `ghcr.io/pedropcardonaa/athena`). Optionally set `ATHENA_ADMIN_PASSWORD` in the environment to skip the setup page.
 
-## Research with an agent
-1. UI → **Settings → Agent access** → create a `write` token.
-2. Put it in `~/.config/athena/config` (`setup.sh` does this), install `skill/research-idea` into `~/.claude/skills/`.
-3. Tell your agent: *"research idea 3"*. It searches, adds sources with relevance notes, and saves a structured report. Agent-added items are labelled in the UI.
+> **Upgrading from v0.2?** v0.3 removes the REST API and API tokens in favour of MCP. Back up first (`make backup`); the migration drops the token table. Re-add your agent with the command below.
+
+## Connect an AI agent (MCP)
+No tokens, no open ports. With Athena running:
+```bash
+claude mcp add athena -- podman exec -i athena python -m app.athena_mcp
+```
+(also Codex, Cursor, Windsurf, Gemini CLI, Claude Desktop: see [docs/mcp.md](docs/mcp.md); add `--read-only` for view-only access.)
+Then ask your agent things like *"summarize my PhD Thesis project"*, *"research idea 3"* or *"add these papers to the project"*. It can read, add and change projects, ideas, sources and notes (never delete), and ships ready-made prompts: `summarize_project`, `improve_idea`, `research_idea`, `find_related_work`, `weekly_review`.
 
 ## Your data
 | Task | How |
