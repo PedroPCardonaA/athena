@@ -24,9 +24,16 @@
 </form>
 {% endmacro %}
 
-{% macro source_row(s, csrf) %}
+{% macro like_btn(url, liked, csrf, next) %}
+<form class="like-form" method="post" action="/sources/like">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="url" value="{{ url }}"><input type="hidden" name="next" value="{{ next }}">
+  <button class="like{{ ' on' if liked }}" aria-pressed="{{ 'true' if liked else 'false' }}" aria-label="{{ 'Unlike' if liked else 'Like' }} this source" title="{{ 'Unlike' if liked else 'Mark as relevant' }}">{{ '★' if liked else '☆' }}</button>
+</form>
+{% endmacro %}
+
+{% macro source_row(s, csrf, next="/") %}
 <div class="src">
-  <a class="t ext" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}<span class="ext-icon" aria-hidden="true"> ↗</span></a>
+  <div class="src-head">{{ like_btn(s.url, s.liked, csrf, next) }}<a class="t ext" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}<span class="ext-icon" aria-hidden="true"> ↗</span></a></div>
   <div class="meta"><span class="domain">{{ s.domain }}</span><span class="chip kind">{{ s.kind }}</span>
     {% if s.direct %}<span class="chip">project</span>{% endif %}{% if s.agent %}<span class="chip agent">agent</span>{% endif %}
     {% if s.authors %}<span>{{ s.authors }}</span>{% endif %}{% if s.year %}<span>· {{ s.year }}</span>{% endif %}</div>

@@ -36,6 +36,7 @@ def add_source(con, *, idea_id=None, project_id=None, url, title="", authors="",
 def rollup(con, project_id):
     """One row per URL across the project's own sources and its ideas' sources."""
     rows = {}
+    liked = db.liked_urls(con)
 
     def merge(r, direct, idea=None):
         e = rows.setdefault(r["url"], {
@@ -63,6 +64,31 @@ def rollup(con, project_id):
     out = sorted(rows.values(), key=lambda e: e["created_at"], reverse=True)
     for e in out:
         e["domain"] = domain(e["url"])
+        e["liked"] = e["url"] in liked
+    return out
+
+
+SORTS = (("liked", "Liked first"), ("newest", "Newest added"), ("oldest", "Oldest added"),
+         ("year", "Year (newest)"), ("title", "Title A–Z"))
+
+
+def sort_sources(rows, sort="liked", kind="", liked_only=False, q="", origin=""):
+    """Filter then order rollup rows. Unknown sort/kind/origin values are ignored."""
+    q = (q or "").strip().lower()
+    out = [
+        r for r in rows
+        if (not liked_only or r["liked"])
+        and (kind not in db.KINDS or r["kind"] == kind)
+        and (origin not in ("agent", "user") or r["agent"] == (origin == "agent"))
+        and (not q or any(q in (r[k] or "").lower() for k in ("url", "title", "authors", "note")))
+    ]
+    out.sort(key=lambda r: r["created_at"], reverse=sort != "oldest")  # stable base order: newest first
+    if sort == "year":
+        out.sort(key=lambda r: r["year"] or 0, reverse=True)
+    elif sort == "title":
+        out.sort(key=lambda r: (r["title"] or r["url"]).lower())
+    elif sort not in ("newest", "oldest"):
+        out.sort(key=lambda r: not r["liked"])
     return out
 
 

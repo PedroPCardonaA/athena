@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% block title %}{{ idea.title }} · Athena{% endblock %}{% block body %}
+{% extends "base.html" %}{% block title %}{{ idea.title }} · Athena{% endblock %}{% from "_macros.html" import like_btn %}{% block body %}
 <div class="crumbs"><a href="/">Athena</a> /
   {% if idea.project_id %}<a href="/p/{{ idea.project_id }}">{{ pnames[idea.project_id] }}</a>{% else %}<a href="/unsorted">Unsorted</a>{% endif %}</div>
 <h1 class="page-title">{{ idea.title }}</h1>
@@ -27,7 +27,7 @@
 <div class="rows">
 {% for s in sources %}
 <div class="src">
-  <a class="t ext" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}<span class="ext-icon" aria-hidden="true"> ↗</span></a>
+  <div class="src-head">{{ like_btn(s.url, s.url in liked, csrf, "/ideas/" ~ idea.id) }}<a class="t ext" href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}<span class="ext-icon" aria-hidden="true"> ↗</span></a></div>
   <div class="meta"><span class="domain">{{ s.url | domain }}</span><span class="chip kind">{{ s.kind }}</span>
     {% if s.added_by == 'agent' %}<span class="chip agent">agent</span>{% endif %}
     {% if s.authors %}<span>{{ s.authors }}</span>{% endif %}{% if s.year %}<span>· {{ s.year }}</span>{% endif %}

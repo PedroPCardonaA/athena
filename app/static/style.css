@@ -242,3 +242,14 @@ pre.token { background: var(--panel); border: 1px solid var(--bd); border-radius
 .cmd { display: flex; gap: .5rem; align-items: flex-start; }
 .cmd pre { flex: 1; margin: 0; background: var(--panel); border: 1px solid var(--bd); border-radius: 10px; padding: .6rem .8rem; overflow-x: auto; font: .85rem/1.5 var(--mono); }
 code { font-family: var(--mono); font-size: .88em; background: var(--panel); padding: .1em .35em; border-radius: 5px; }
+
+.src-head { display: flex; align-items: baseline; gap: .4rem; }
+.like-form { display: inline; margin: 0; }
+button.like { background: none; color: var(--mut); padding: 0 .15rem; font-size: 1.1rem; line-height: 1; font-weight: 400; border-radius: 4px; }
+button.like:hover { color: var(--ac); filter: none; }
+button.like.on { color: var(--ac); }
+.srcfilter { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; margin: 0 0 .75rem; font-size: .85rem; color: var(--mut); }
+.srcfilter label { display: flex; align-items: center; gap: .3rem; }
+.srcfilter select, .srcfilter input[type=search] { width: auto; padding: .3rem .5rem; font-size: .85rem; }
+.srcfilter input[type=search] { flex: 1; min-width: 10rem; }
+.srcfilter input[type=checkbox] { width: auto; }

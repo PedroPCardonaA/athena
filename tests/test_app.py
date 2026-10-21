@@ -259,3 +259,67 @@ def test_rest_api_and_tokens_are_gone(client):
     assert client.get("/api/ideas").status_code == 404
     assert client.post("/tokens", data={"name": "x", "csrf": csrf}).status_code in (404, 405)
     assert "mcp add athena" in client.get("/settings").text
+
+
+def _liked_fixture(client):
+    csrf = login(client)
+    client.post("/projects", data={"name": "P", "csrf": csrf})
+    client.post("/ideas", data={"title": "A", "project_id": "1", "csrf": csrf})
+    client.post("/projects/1/sources", data={"url": "https://x.org/old", "title": "Zeta", "kind": "paper", "year": "2019", "csrf": csrf})
+    client.post("/projects/1/sources", data={"url": "https://x.org/mid", "title": "Alpha", "kind": "repo", "year": "2023", "note": "needle", "csrf": csrf})
+    client.post("/ideas/1/sources", data={"url": "https://x.org/old", "title": "Zeta", "csrf": csrf})
+    return csrf
+
+
+def test_like_toggle_and_rollup(client):
+    from app import service
+    csrf = _liked_fixture(client)
+    like = {"url": "https://x.org/old", "next": "/p/1#sources"}
+    assert client.post("/sources/like", data=like).status_code == 403  # csrf
+    r = client.post("/sources/like", data={**like, "csrf": csrf}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/p/1#sources"
+    rows = {r["url"]: r for r in service.rollup(db.connect(app.state.db_path), 1)}
+    assert rows["https://x.org/old"]["liked"] and not rows["https://x.org/mid"]["liked"]
+    assert 'aria-pressed="true"' in client.get("/ideas/1").text  # same URL on the idea page
+    client.post("/sources/like", data={**like, "csrf": csrf})
+    assert not service.rollup(db.connect(app.state.db_path), 1)[0]["liked"]
+    for bad in ("https://evil.example/", "//evil.example", "/p/1/../..//x"):
+        r = client.post("/sources/like", data={**like, "next": bad, "csrf": csrf}, follow_redirects=False)
+        assert r.headers["location"] == "/"
+    assert client.post("/sources/like", data={"url": "javascript:1", "csrf": csrf}).status_code == 422
+
+
+def test_sort_and_filter_sources(client):
+    from app import service
+    csrf = _liked_fixture(client)
+    client.post("/sources/like", data={"url": "https://x.org/old", "next": "/p/1", "csrf": csrf})
+    con = db.connect(app.state.db_path)
+    # timestamps are second-granular; pin them so the order is deterministic
+    con.execute("UPDATE project_sources SET created_at='2024-01-01 00:00:00' WHERE url LIKE '%old'")
+    con.execute("UPDATE sources SET created_at='2024-01-01 00:00:00'")
+    con.execute("UPDATE project_sources SET created_at='2024-06-01 00:00:00' WHERE url LIKE '%mid'")
+    con.commit()
+    rows = service.rollup(con, 1)
+    urls = lambda **kw: [r["url"].rsplit("/", 1)[1] for r in service.sort_sources(rows, **kw)]
+    assert urls() == ["old", "mid"] and urls(sort="bogus") == ["old", "mid"]  # liked first by default
+    assert urls(sort="newest") == ["mid", "old"] and urls(sort="oldest") == ["old", "mid"]
+    assert urls(sort="year") == ["mid", "old"] and urls(sort="title") == ["mid", "old"]
+    assert urls(kind="repo") == ["mid"] and urls(kind="nope") == ["old", "mid"]
+    assert urls(liked_only=True) == ["old"] and urls(q="NEEDLE") == ["mid"] and urls(origin="agent") == []
+    main = main_of(client, "/p/1?sort=title&liked=1&kind=paper")
+    assert "Zeta" in main and "Alpha" not in main and "1 of 2" in main
+    assert "No sources match" in main_of(client, "/p/1?q=zzzz")
+
+
+def test_like_survives_export_import(client, tmp_path):
+    csrf = _liked_fixture(client)
+    client.post("/sources/like", data={"url": "https://x.org/mid", "next": "/", "csrf": csrf})
+    exp = client.get("/export.json").json()
+    assert [s["liked"] for s in exp["projects"][0]["sources"]] == [False, True]
+    app.state.db_path = str(tmp_path / "other.db")
+    auth._attempts.clear()
+    with TestClient(app) as c2:
+        csrf2 = login(c2)
+        import json
+        c2.post("/import", files={"file": ("e.json", json.dumps(exp))}, data={"csrf": csrf2})
+        assert db.liked_urls(db.connect(app.state.db_path)) == {"https://x.org/mid"}

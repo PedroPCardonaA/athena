@@ -198,7 +198,7 @@ def _idea_or_404(con, iid):
 @app.get("/ideas/{iid}")
 def detail(request: Request, iid: int, s=Depends(session), con=Depends(get_con)):
     idea = _idea_or_404(con, iid)
-    return page(request, "idea.html", s, con, idea=idea, sources=db.sources_of(con, iid),
+    return page(request, "idea.html", s, con, idea=idea, sources=db.sources_of(con, iid), liked=db.liked_urls(con),
                 notes=db.notes_of(con, iid), current_project=idea["project_id"])
 
 
@@ -229,6 +229,19 @@ def ui_add_source(iid: int, url: str = Form(..., max_length=2000), title: str = 
         raise HTTPException(422, "url must be http(s)")
     db.add_source(con, iid, url, title, authors, opt_int(year, 1000, 2100, "year"), kind, note, "user")
     return RedirectResponse(f"/ideas/{iid}", 303)
+
+
+@app.post("/sources/like", dependencies=[Depends(csrf)])
+def ui_like_source(url: str = Form(..., max_length=2000), next: str = Form("/", max_length=500), con=Depends(get_con)):
+    try:
+        url = service.safe_url(url)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    db.toggle_like(con, url)
+    # only bounce back to our own project/idea pages, never an arbitrary location
+    if not (next.startswith(("/p/", "/ideas/")) and "//" not in next and "\\" not in next):
+        next = "/"
+    return RedirectResponse(next, 303)
 
 
 @app.post("/sources/{sid}/delete", dependencies=[Depends(csrf)])
@@ -285,14 +298,20 @@ def _project_or_404(con, pid):
 @app.get("/p/{pid}")
 def project_view(request: Request, pid: int, s=Depends(session), con=Depends(get_con)):
     proj = _project_or_404(con, pid)
+    allsrc = service.rollup(con, pid)
+    qp = request.query_params
+    sf = {"sort": qp.get("sort", ""), "kind": qp.get("kind", ""), "origin": qp.get("origin", ""),
+          "q": qp.get("q", "")[:200], "liked": qp.get("liked", "") == "1"}
+    shown = service.sort_sources(allsrc, sf["sort"], sf["kind"], sf["liked"], sf["q"], sf["origin"])
     return page(request, "project.html", s, con, project=proj, ideas=db.list_ideas(con, project_id=pid),
-                sources=service.rollup(con, pid), current_project=pid, error=request.query_params.get("error", ""))
+                sources=shown, sources_total=len(allsrc), sf=sf, sort_options=service.SORTS,
+                current_project=pid, error=qp.get("error", ""))
 
 
 @app.get("/unsorted")
 def unsorted_view(request: Request, s=Depends(session), con=Depends(get_con)):
     return page(request, "project.html", s, con, project=None, ideas=db.list_ideas(con, project_id=0),
-                sources=[], current_project=0, error="")
+                sources=[], sources_total=0, sf={}, sort_options=service.SORTS, current_project=0, error="")
 
 
 @app.post("/projects", dependencies=[Depends(csrf)])
@@ -434,6 +453,7 @@ class NoteIn(BaseModel):
 class ExportSource(SourceIn):
     added_by: Literal["user", "agent"] = "user"
     created_at: str = Field(max_length=40)
+    liked: bool = False
 
 
 class ExportNote(NoteIn):

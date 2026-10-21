@@ -29,11 +29,22 @@
 </div>
 
 {% if project %}
-<div class="section-head" id="sources"><h2>Sources &amp; citations <span class="count">{{ sources | length }}</span></h2>
+<div class="section-head" id="sources"><h2>Sources &amp; citations <span class="count">{% if sources | length != sources_total %}{{ sources | length }} of {% endif %}{{ sources_total }}</span></h2>
   {% if sources %}<a class="pill" href="/p/{{ project.id }}/export.bib">Download .bib</a>{% endif %}</div>
+{% if sources_total %}
+<form class="srcfilter" method="get" action="/p/{{ project.id }}#sources">
+  <label>Sort <select name="sort">{% for v, label in sort_options %}<option value="{{ v }}" {{ 'selected' if sf.sort == v }}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Kind <select name="kind"><option value="">All</option>{% for k in kinds %}<option {{ 'selected' if sf.kind == k }}>{{ k }}</option>{% endfor %}</select></label>
+  <label>Added by <select name="origin"><option value="">Anyone</option>
+    <option value="user" {{ 'selected' if sf.origin == 'user' }}>me</option><option value="agent" {{ 'selected' if sf.origin == 'agent' }}>agent</option></select></label>
+  <label class="chk"><input type="checkbox" name="liked" value="1" {{ 'checked' if sf.liked }}> ★ liked only</label>
+  <input type="search" name="q" value="{{ sf.q }}" placeholder="Filter by title, author, note…" maxlength="200" aria-label="Filter sources">
+  <button>Apply</button><a class="pill" href="/p/{{ project.id }}#sources">Reset</a>
+</form>
+{% endif %}
 <div class="rows">
-{% for s in sources %}{{ source_row(s, csrf) }}
-{% else %}<div class="empty">No sources yet. Add citations here or inside any idea; they all show up in this list.</div>{% endfor %}
+{% for s in sources %}{{ source_row(s, csrf, "/p/" ~ project.id ~ "#sources") }}
+{% else %}<div class="empty">{% if sources_total %}No sources match these filters.{% else %}No sources yet. Add citations here or inside any idea; they all show up in this list.{% endif %}</div>{% endfor %}
 </div>
 <details class="panel"><summary>Add source to project</summary>
 <form method="post" action="/projects/{{ project.id }}/sources">

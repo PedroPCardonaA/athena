@@ -89,6 +89,12 @@ ALTER TABLE projects ADD COLUMN summary_md TEXT NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN summary_updated_at TEXT;
 DROP TABLE api_tokens;
 """,
+"""
+CREATE TABLE liked_urls(
+  url TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+""",
 ]
 
 
@@ -260,6 +266,20 @@ def add_project_source(con, project_id, url, title="", authors="", year=None, ki
     return row["id"], False
 
 
+def liked_urls(con):
+    return {r["url"] for r in con.execute("SELECT url FROM liked_urls")}
+
+
+def toggle_like(con, url):
+    """Flip the like on a URL. Returns True if it is now liked."""
+    if con.execute("DELETE FROM liked_urls WHERE url=?", (url,)).rowcount:
+        con.commit()
+        return False
+    con.execute("INSERT INTO liked_urls(url) VALUES(?)", (url,))
+    con.commit()
+    return True
+
+
 def set_project_summary(con, project_id, summary_md):
     con.execute("UPDATE projects SET summary_md=?, summary_updated_at=CURRENT_TIMESTAMP WHERE id=?", (summary_md, project_id))
     con.commit()
@@ -276,12 +296,14 @@ EXPORT_VERSION = 1
 
 
 def export_all(con):
+    liked = liked_urls(con)
     ideas = []
     projects = []
     for p in con.execute("SELECT * FROM projects ORDER BY id"):
         d = {k: p[k] for k in ("name", "description", "summary_md", "created_at")}
         d["sources"] = [
-            {k: r[k] for k in ("url", "title", "authors", "year", "kind", "note", "added_by", "created_at")}
+            {**{k: r[k] for k in ("url", "title", "authors", "year", "kind", "note", "added_by", "created_at")},
+             "liked": r["url"] in liked}
             for r in con.execute("SELECT * FROM project_sources WHERE project_id=? ORDER BY id", (p["id"],))
         ]
         projects.append(d)
@@ -290,7 +312,8 @@ def export_all(con):
         d = {k: i[k] for k in ("title", "summary", "body_md", "status", "tags", "created_at", "updated_at")}
         d["project"] = names.get(i["project_id"])
         d["sources"] = [
-            {k: r[k] for k in ("url", "title", "authors", "year", "kind", "note", "added_by", "created_at")}
+            {**{k: r[k] for k in ("url", "title", "authors", "year", "kind", "note", "added_by", "created_at")},
+             "liked": r["url"] in liked}
             for r in con.execute("SELECT * FROM sources WHERE idea_id=? ORDER BY id", (i["id"],))
         ]
         d["notes"] = [
@@ -299,6 +322,11 @@ def export_all(con):
         ]
         ideas.append(d)
     return {"version": EXPORT_VERSION, "projects": projects, "ideas": ideas}
+
+
+def _import_like(con, src):
+    if src.get("liked"):
+        con.execute("INSERT OR IGNORE INTO liked_urls(url) VALUES(?)", (src["url"],))
 
 
 def import_all(con, data):
@@ -317,6 +345,7 @@ def import_all(con, data):
                 con.execute(
                     "INSERT OR IGNORE INTO project_sources(project_id,url,title,authors,year,kind,note,added_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                     (pid, r["url"], r["title"], r["authors"], r["year"], r["kind"], r["note"], r["added_by"], r["created_at"]))
+                _import_like(con, r)
         for r in con.execute("SELECT id,name FROM projects"):
             ids[r["name"]] = r["id"]
         for d in data["ideas"]:
@@ -334,6 +363,7 @@ def import_all(con, data):
                     "INSERT OR IGNORE INTO sources(idea_id,url,title,authors,year,kind,note,added_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                     (iid, r["url"], r["title"], r["authors"], r["year"], r["kind"], r["note"], r["added_by"], r["created_at"]),
                 )
+                _import_like(con, r)
             for r in d["notes"]:
                 con.execute("INSERT INTO notes(idea_id,kind,body_md,created_at) VALUES(?,?,?,?)", (iid, r["kind"], r["body_md"], r["created_at"]))
             _reindex(con, iid)
