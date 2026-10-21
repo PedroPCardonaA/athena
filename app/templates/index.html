@@ -1,21 +1,16 @@
-{% extends "base.html" %}{% block body %}
-<form method="get" class="row">
-<input name="q" value="{{ q }}" placeholder="Search ideas…" maxlength="200">
-<select name="status"><option value="">any status</option>{% for s in statuses %}<option {{ 'selected' if s == status }}>{{ s }}</option>{% endfor %}</select>
-<button>Search</button></form>
-
-<details class="card"><summary>New idea</summary>
-<form method="post" action="/ideas">
-<input type="hidden" name="csrf" value="{{ csrf }}">
-<label>Title <input name="title" required maxlength="300"></label>
-<label>Summary <textarea name="summary" rows="3" maxlength="2000"></textarea></label>
-<div class="row"><label>Status <select name="status">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></label>
-<label>Tags (comma-sep) <input name="tags" maxlength="300"></label></div>
-<button>Create</button></form></details>
-
-<ul class="list">
-{% for i in ideas %}
-<li><a href="/ideas/{{ i.id }}">{{ i.title }}</a> <span class="badge {{ i.status }}">{{ i.status }}</span>
-<small>{{ i.tags }} · {{ i.updated_at }}</small><p>{{ i.summary }}</p></li>
-{% else %}<li>No ideas yet.</li>{% endfor %}
-</ul>{% endblock %}
+{% extends "base.html" %}{% block title %}Athena{% endblock %}{% block body %}
+{% if not q and not status %}
+<div class="hero"><img class="logo-lg" src="/static/athena.svg" alt=""><h1>What are you thinking about?</h1>
+<p>Capture it now, research it later.</p></div>
+{{ composer(csrf, projects, statuses) }}
+{% endif %}
+<div class="section-head"><h2>{{ 'Results' if (q or status) else 'Recent ideas' }}</h2>
+  <div class="filters">
+    <a class="pill {{ 'on' if not status }}" href="/?q={{ q | urlencode }}">all</a>
+    {% for s in statuses %}<a class="pill {{ 'on' if s == status }}" href="/?q={{ q | urlencode }}&status={{ s }}">{{ s }}</a>{% endfor %}
+  </div></div>
+{% if q %}<p><small>Matching “{{ q }}”</small></p>{% endif %}
+<div class="cards">
+{% for i in ideas %}{{ idea_card(i, pnames) }}
+{% else %}<div class="empty">{{ 'Nothing matches.' if (q or status) else 'No ideas yet. Capture your first one above.' }}</div>{% endfor %}
+</div>{% endblock %}

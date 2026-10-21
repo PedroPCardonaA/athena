@@ -1,11 +1,50 @@
+{% from "_macros.html" import idea_card, composer %}
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{% block title %}Ideas{% endblock %}</title>
-<link rel="stylesheet" href="/static/style.css"></head>
+<html lang="en"><head>{% include "_head.html" %}<title>{% block title %}Athena{% endblock %}</title></head>
 <body>
-{% if csrf %}
-<header><a href="/" class="brand">Ideas Saver</a><nav><a href="/tokens">API tokens</a>
-<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">Log out</button></form></nav></header>
-{% endif %}
-<main>{% block body %}{% endblock %}</main>
+<input type="checkbox" id="nav-toggle" class="nav-check" aria-label="Toggle sidebar">
+<div class="shell">
+<aside class="sidebar">
+  <div class="side-head">
+    <a class="brand" href="/"><img class="logo" src="/static/athena.svg" alt="">Athena</a>
+    <label for="nav-toggle" class="icon-btn close-only" title="Close">✕</label>
+  </div>
+  <a class="btn-new" href="/#new">✎ New idea</a>
+  <form class="search" action="/" method="get" role="search">
+    <input id="search" type="search" name="q" placeholder="Search ideas  (Ctrl K)" maxlength="200" aria-label="Search ideas">
+  </form>
+  <nav class="tree" aria-label="Projects">
+    <div class="tree-title">Projects
+      <details class="addproj"><summary class="icon-btn" title="New project">＋</summary>
+        <form method="post" action="/projects">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input name="name" placeholder="Project name" required maxlength="80">
+          <input name="description" placeholder="Description (optional)" maxlength="1000">
+          <button>Create project</button>
+        </form></details>
+    </div>
+    {% for p in projects %}
+    <details class="group {{ 'current' if current_project == p.id }}" {{ 'open' if current_project == p.id }}>
+      <summary><a href="/p/{{ p.id }}">{{ p.name }}</a><span class="count">{{ p.n }}</span></summary>
+      {% for i in nav_ideas if i.project_id == p.id %}<a class="leaf {{ 'current' if request.path_params.get('iid') == i.id|string }}" href="/ideas/{{ i.id }}">{{ i.title }}</a>{% endfor %}
+    </details>
+    {% endfor %}
+    <details class="group {{ 'current' if current_project == 0 }}" {{ 'open' if current_project == 0 }}>
+      <summary><a href="/unsorted">Unsorted</a><span class="count">{{ nav_ideas | selectattr('project_id', 'none') | list | length }}</span></summary>
+      {% for i in nav_ideas if i.project_id is none %}<a class="leaf {{ 'current' if request.path_params.get('iid') == i.id|string }}" href="/ideas/{{ i.id }}">{{ i.title }}</a>{% endfor %}
+    </details>
+  </nav>
+  <div class="side-foot">
+    <a class="navlink" href="/settings">⚙ Settings</a>
+    <button type="button" id="theme-toggle" class="icon-btn" title="Toggle light/dark" aria-label="Toggle theme">◐</button>
+    <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="icon-btn" title="Log out" aria-label="Log out">⏻</button></form>
+  </div>
+</aside>
+<label for="nav-toggle" class="scrim" aria-hidden="true"></label>
+<div class="main-col">
+  <header class="topbar"><label for="nav-toggle" class="icon-btn" title="Menu">☰</label>
+    <a class="brand" href="/"><img class="logo" src="/static/athena.svg" alt="">Athena</a></header>
+  <main>{% block body %}{% endblock %}</main>
+</div>
+</div>
 </body></html>

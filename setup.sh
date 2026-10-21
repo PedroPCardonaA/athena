@@ -21,13 +21,13 @@ echo "1) Open $URL and choose your password."
 
 read -r -p "Install the Claude Code research skill? [y/N] " yn || yn=n
 if [[ "$yn" =~ ^[Yy]$ ]]; then
-  mkdir -p ~/.claude/skills ~/.config/ideas-saver
+  mkdir -p ~/.claude/skills ~/.config/athena
   cp -r skill/research-idea ~/.claude/skills/
   echo "2) In the UI go to 'API tokens' and create a write token, then paste it here."
   read -r -s -p "Token (hidden): " tok; echo
   if [[ -n "$tok" ]]; then
     umask 077
-    printf '{"url": "%s", "token": "%s"}\n' "$URL" "$tok" > ~/.config/ideas-saver/config
-    echo "Saved ~/.config/ideas-saver/config (mode 600). Try: research idea 1"
+    printf '{"url": "%s", "token": "%s"}\n' "$URL" "$tok" > ~/.config/athena/config
+    echo "Saved ~/.config/athena/config (mode 600). Try: research idea 1"
   fi
 fi

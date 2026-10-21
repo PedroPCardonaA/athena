@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% block title %}{{ project.name if project else 'Unsorted' }} · Athena{% endblock %}{% block body %}
+<div class="crumbs"><a href="/">Athena</a> / Projects</div>
+<div class="proj-head">
+  <h1 class="page-title">{{ project.name if project else 'Unsorted' }}</h1>
+  {% if project and project.description %}<p>{{ project.description }}</p>{% endif %}
+  {% if not project %}<p>Ideas that are not in a project yet.</p>{% endif %}
+</div>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+
+{{ composer(csrf, projects, statuses, current_project) }}
+
+<div class="section-head"><h2>Ideas <span class="count">{{ ideas | length }}</span></h2></div>
+<div class="cards">
+{% for i in ideas %}{{ idea_card(i, pnames) }}
+{% else %}<div class="empty">No ideas here yet.</div>{% endfor %}
+</div>
+
+{% if project %}
+<details class="panel"><summary>Edit project</summary>
+<form method="post" action="/projects/{{ project.id }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="field">Name <input name="name" value="{{ project.name }}" required maxlength="80"></label>
+  <label class="field">Description <textarea name="description" rows="2" maxlength="1000">{{ project.description }}</textarea></label>
+  <button>Save</button></form></details>
+<details class="danger-zone"><summary>Delete project…</summary>
+<form method="post" action="/projects/{{ project.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}">
+<p><small>Its ideas are kept and moved to Unsorted.</small></p><button class="danger">Delete project</button></form></details>
+{% endif %}
+{% endblock %}

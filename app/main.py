@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import Literal
 from urllib.parse import urlparse
@@ -42,7 +43,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
     resp.headers["Content-Security-Policy"] = (
-        "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; "
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; "
         "base-uri 'none'; frame-ancestors 'none'"
     )
     resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -87,8 +88,11 @@ async def csrf(request: Request, s=Depends(session)):
         raise HTTPException(403, "bad csrf token")
 
 
-def page(request, name, s, **ctx):
-    return templates.TemplateResponse(request, name, {"csrf": s["csrf"], "statuses": db.STATUSES, "kinds": db.KINDS, **ctx})
+def page(request, name, s, con, **ctx):
+    projects = db.list_projects(con)
+    return templates.TemplateResponse(request, name, {
+        "csrf": s["csrf"], "statuses": db.STATUSES, "kinds": db.KINDS, "projects": projects,
+        "pnames": {p["id"]: p["name"] for p in projects}, "nav_ideas": db.nav_ideas(con), **ctx})
 
 
 def safe_url(url: str) -> str:
@@ -96,6 +100,27 @@ def safe_url(url: str) -> str:
     if u.scheme not in ("http", "https") or not u.netloc:
         raise ValueError("url must be http(s)")
     return url.strip()
+
+
+def opt_int(raw: str, lo=0, hi=10**9, what="value") -> int | None:
+    """Parse an optional integer from a form field ('' -> None)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        v = int(raw)
+    except ValueError:
+        raise HTTPException(422, f"{what} must be a number")
+    if not lo <= v <= hi:
+        raise HTTPException(422, f"{what} out of range")
+    return v
+
+
+def project_id_or_422(con, raw) -> int | None:
+    pid = opt_int(raw, what="project") if isinstance(raw, str) else raw
+    if pid and not db.get_project(con, pid):
+        raise HTTPException(422, "unknown project")
+    return pid or None
 
 
 @app.get("/healthz")
@@ -154,17 +179,19 @@ def logout():
     return resp
 
 
-# ---------- UI ----------
+# ---------- UI: ideas ----------
 
 @app.get("/")
 def index(request: Request, q: str = "", status: str = "", s=Depends(session), con=Depends(get_con)):
-    return page(request, "index.html", s, ideas=db.list_ideas(con, q[:200], status), q=q, status=status)
+    ideas = db.list_ideas(con, q[:200], status)
+    return page(request, "index.html", s, con, ideas=ideas, q=q, status=status, current_project=None)
 
 
 @app.post("/ideas", dependencies=[Depends(csrf)])
 def ui_create(title: str = Form(..., min_length=1, max_length=300), summary: str = Form("", max_length=2000),
-              status: Literal[db.STATUSES] = Form("seed"), tags: str = Form("", max_length=300), con=Depends(get_con)):
-    iid = db.create_idea(con, title.strip(), summary, "", status, tags)
+              status: Literal[db.STATUSES] = Form("seed"), tags: str = Form("", max_length=300),
+              project_id: str = Form(""), con=Depends(get_con)):
+    iid = db.create_idea(con, title.strip(), summary, "", status, tags, project_id_or_422(con, project_id))
     return RedirectResponse(f"/ideas/{iid}", 303)
 
 
@@ -177,15 +204,18 @@ def _idea_or_404(con, iid):
 
 @app.get("/ideas/{iid}")
 def detail(request: Request, iid: int, s=Depends(session), con=Depends(get_con)):
-    return page(request, "idea.html", s, idea=_idea_or_404(con, iid), sources=db.sources_of(con, iid), notes=db.notes_of(con, iid))
+    idea = _idea_or_404(con, iid)
+    return page(request, "idea.html", s, con, idea=idea, sources=db.sources_of(con, iid),
+                notes=db.notes_of(con, iid), current_project=idea["project_id"])
 
 
 @app.post("/ideas/{iid}", dependencies=[Depends(csrf)])
 def ui_update(iid: int, title: str = Form(..., min_length=1, max_length=300), summary: str = Form("", max_length=2000),
               body_md: str = Form("", max_length=100_000), status: Literal[db.STATUSES] = Form(...),
-              tags: str = Form("", max_length=300), con=Depends(get_con)):
+              tags: str = Form("", max_length=300), project_id: str = Form(""), con=Depends(get_con)):
     _idea_or_404(con, iid)
-    db.update_idea(con, iid, title=title.strip(), summary=summary, body_md=body_md, status=status, tags=tags)
+    db.update_idea(con, iid, title=title.strip(), summary=summary, body_md=body_md, status=status, tags=tags,
+                   project_id=project_id_or_422(con, project_id) or 0)
     return RedirectResponse(f"/ideas/{iid}", 303)
 
 
@@ -197,14 +227,14 @@ def ui_delete(iid: int, con=Depends(get_con)):
 
 @app.post("/ideas/{iid}/sources", dependencies=[Depends(csrf)])
 def ui_add_source(iid: int, url: str = Form(..., max_length=2000), title: str = Form("", max_length=500),
-                  authors: str = Form("", max_length=500), year: int | None = Form(None, ge=1000, le=2100),
+                  authors: str = Form("", max_length=500), year: str = Form(""),
                   kind: Literal[db.KINDS] = Form("other"), note: str = Form("", max_length=5000), con=Depends(get_con)):
     _idea_or_404(con, iid)
     try:
         url = safe_url(url)
     except ValueError:
         raise HTTPException(422, "url must be http(s)")
-    db.add_source(con, iid, url, title, authors, year, kind, note, "user")
+    db.add_source(con, iid, url, title, authors, opt_int(year, 1000, 2100, "year"), kind, note, "user")
     return RedirectResponse(f"/ideas/{iid}", 303)
 
 
@@ -250,9 +280,60 @@ def ui_import_bib(iid: int, bib: str = Form(..., max_length=500_000), con=Depend
     return RedirectResponse(f"/ideas/{iid}", 303)
 
 
+# ---------- UI: projects ----------
+
+def _project_or_404(con, pid):
+    p = db.get_project(con, pid)
+    if not p:
+        raise HTTPException(404)
+    return p
+
+
+@app.get("/p/{pid}")
+def project_view(request: Request, pid: int, s=Depends(session), con=Depends(get_con)):
+    proj = _project_or_404(con, pid)
+    return page(request, "project.html", s, con, project=proj, ideas=db.list_ideas(con, project_id=pid),
+                current_project=pid, error=request.query_params.get("error", ""))
+
+
+@app.get("/unsorted")
+def unsorted_view(request: Request, s=Depends(session), con=Depends(get_con)):
+    return page(request, "project.html", s, con, project=None, ideas=db.list_ideas(con, project_id=0),
+                current_project=0, error="")
+
+
+@app.post("/projects", dependencies=[Depends(csrf)])
+def ui_project_create(name: str = Form(..., min_length=1, max_length=80), description: str = Form("", max_length=1000),
+                      con=Depends(get_con)):
+    try:
+        pid = db.create_project(con, name.strip(), description)
+    except sqlite3.IntegrityError:
+        raise HTTPException(422, "a project with that name already exists")
+    return RedirectResponse(f"/p/{pid}", 303)
+
+
+@app.post("/projects/{pid}", dependencies=[Depends(csrf)])
+def ui_project_update(pid: int, name: str = Form(..., min_length=1, max_length=80),
+                      description: str = Form("", max_length=1000), con=Depends(get_con)):
+    _project_or_404(con, pid)
+    try:
+        db.update_project(con, pid, name.strip(), description)
+    except sqlite3.IntegrityError:
+        return RedirectResponse(f"/p/{pid}?error=name+already+exists", 303)
+    return RedirectResponse(f"/p/{pid}", 303)
+
+
+@app.post("/projects/{pid}/delete", dependencies=[Depends(csrf)])
+def ui_project_delete(pid: int, con=Depends(get_con)):
+    db.delete_project(con, pid)
+    return RedirectResponse("/", 303)
+
+
+# ---------- UI: backup + tokens ----------
+
 @app.get("/export.json")
 def ui_export(s=Depends(session), con=Depends(get_con)):
-    return JSONResponse(db.export_all(con), headers={"Content-Disposition": 'attachment; filename="ideas-export.json"'})
+    return JSONResponse(db.export_all(con), headers={"Content-Disposition": 'attachment; filename="athena-export.json"'})
 
 
 MAX_IMPORT = 20 * 1024 * 1024
@@ -271,25 +352,32 @@ async def ui_import(file: UploadFile = File(...), con=Depends(get_con)):
     return RedirectResponse("/", 303)
 
 
+def _tokens(con):
+    return con.execute("SELECT id,name,scope,last_used FROM api_tokens ORDER BY id").fetchall()
+
+
+@app.get("/settings")
+def settings_page(request: Request, s=Depends(session), con=Depends(get_con)):
+    return page(request, "settings.html", s, con, tokens=_tokens(con), new_token=None, current_project=None)
+
+
 @app.get("/tokens")
-def tokens_page(request: Request, s=Depends(session), con=Depends(get_con)):
-    rows = con.execute("SELECT id,name,scope,last_used FROM api_tokens ORDER BY id").fetchall()
-    return page(request, "tokens.html", s, tokens=rows, new_token=None)
+def tokens_redirect():
+    return RedirectResponse("/settings", 301)
 
 
 @app.post("/tokens", dependencies=[Depends(csrf)])
 def tokens_create(request: Request, name: str = Form(..., min_length=1, max_length=80),
                   scope: Literal["read", "write"] = Form("write"), s=Depends(session), con=Depends(get_con)):
     tok = auth.create_token(con, name.strip(), scope)
-    rows = con.execute("SELECT id,name,scope,last_used FROM api_tokens ORDER BY id").fetchall()
-    return page(request, "tokens.html", s, tokens=rows, new_token=tok)
+    return page(request, "settings.html", s, con, tokens=_tokens(con), new_token=tok, current_project=None)
 
 
 @app.post("/tokens/{tid}/delete", dependencies=[Depends(csrf)])
 def tokens_delete(tid: int, con=Depends(get_con)):
     con.execute("DELETE FROM api_tokens WHERE id=?", (tid,))
     con.commit()
-    return RedirectResponse("/tokens", 303)
+    return RedirectResponse("/settings", 303)
 
 
 # ---------- REST API (bearer token) ----------
@@ -310,6 +398,7 @@ class IdeaIn(BaseModel):
     body_md: str = Field("", max_length=100_000)
     status: Literal[db.STATUSES] = "seed"
     tags: str = Field("", max_length=300)
+    project_id: int | None = Field(None, ge=0)
 
 
 class IdeaPatch(BaseModel):
@@ -318,6 +407,12 @@ class IdeaPatch(BaseModel):
     body_md: str | None = Field(None, max_length=100_000)
     status: Literal[db.STATUSES] | None = None
     tags: str | None = Field(None, max_length=300)
+    project_id: int | None = Field(None, ge=0)  # 0 = move to Unsorted
+
+
+class ProjectIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field("", max_length=1000)
 
 
 class SourceIn(BaseModel):
@@ -348,15 +443,21 @@ class ExportNote(NoteIn):
     created_at: str = Field(max_length=40)
 
 
+class ExportProject(ProjectIn):
+    created_at: str = Field(max_length=40)
+
+
 class ExportIdea(IdeaIn):
     created_at: str = Field(max_length=40)
     updated_at: str = Field(max_length=40)
+    project: str | None = Field(None, max_length=80)
     sources: list[ExportSource] = []
     notes: list[ExportNote] = []
 
 
 class ExportIn(BaseModel):
     version: Literal[1]
+    projects: list[ExportProject] = []  # absent in v0.1.x exports
     ideas: list[ExportIdea]
 
 
@@ -369,14 +470,29 @@ def api_export(con=Depends(get_con)):
     return db.export_all(con)
 
 
+@app.get("/api/projects", dependencies=[Depends(api_auth)])
+def api_projects(con=Depends(get_con)):
+    return _d(db.list_projects(con))
+
+
+@app.post("/api/projects", status_code=201, dependencies=[Depends(api_auth)])
+def api_project_create(body: ProjectIn, con=Depends(get_con)):
+    try:
+        return {"id": db.create_project(con, body.name.strip(), body.description)}
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "a project with that name already exists")
+
+
 @app.get("/api/ideas", dependencies=[Depends(api_auth)])
-def api_list(q: str = "", status: str = "", con=Depends(get_con)):
-    return _d(db.list_ideas(con, q[:200], status))
+def api_list(q: str = "", status: str = "", project_id: int | None = None, con=Depends(get_con)):
+    return _d(db.list_ideas(con, q[:200], status, project_id))
 
 
 @app.post("/api/ideas", status_code=201, dependencies=[Depends(api_auth)])
 def api_create(body: IdeaIn, con=Depends(get_con)):
-    return {"id": db.create_idea(con, **body.model_dump())}
+    data = body.model_dump()
+    data["project_id"] = project_id_or_422(con, data["project_id"])
+    return {"id": db.create_idea(con, **data)}
 
 
 @app.get("/api/ideas/{iid}", dependencies=[Depends(api_auth)])
@@ -388,7 +504,10 @@ def api_get(iid: int, con=Depends(get_con)):
 @app.patch("/api/ideas/{iid}", dependencies=[Depends(api_auth)])
 def api_patch(iid: int, body: IdeaPatch, con=Depends(get_con)):
     _idea_or_404(con, iid)
-    db.update_idea(con, iid, **body.model_dump())
+    data = body.model_dump()
+    if data["project_id"]:
+        project_id_or_422(con, data["project_id"])
+    db.update_idea(con, iid, **data)
     return {"ok": True}
 
 

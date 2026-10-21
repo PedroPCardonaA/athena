@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Athena owl">
+  <path d="M22 34 30 12 49 27Q64 21 79 27L98 12 106 34Q114 56 107 82Q98 117 64 119Q30 117 21 82Q14 56 22 34Z" fill="#4a4fb5"/>
+  <path d="M64 119Q30 117 21 82Q18 66 20 52Q30 78 64 80Q98 78 108 52Q110 66 107 82Q98 117 64 119Z" fill="#3a3e96"/>
+  <circle cx="45" cy="60" r="26" fill="#6f74d6"/>
+  <circle cx="83" cy="60" r="26" fill="#6f74d6"/>
+  <circle cx="45" cy="60" r="20" fill="#f7c948"/>
+  <circle cx="83" cy="60" r="20" fill="#f7c948"/>
+  <circle cx="45" cy="60" r="13" fill="#e8962a"/>
+  <circle cx="83" cy="60" r="13" fill="#e8962a"/>
+  <circle cx="45" cy="60" r="8" fill="#15162e"/>
+  <circle cx="83" cy="60" r="8" fill="#15162e"/>
+  <circle cx="48.5" cy="56.5" r="3" fill="#fff"/>
+  <circle cx="86.5" cy="56.5" r="3" fill="#fff"/>
+  <path d="M64 68 56 84 64 96 72 84Z" fill="#f2a33a"/>
+  <path d="M64 68 60 80 64 90 68 80Z" fill="#f8c15c"/>
+  <path d="M44 100l6 5 6-5M58 104l6 5 6-5M72 100l6 5 6-5" fill="none" stroke="#8c91e6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

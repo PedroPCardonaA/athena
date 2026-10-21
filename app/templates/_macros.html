@@ -1,0 +1,25 @@
+{% macro idea_card(i, pnames) %}
+<a class="card-idea" href="/ideas/{{ i.id }}">
+  <div class="t">{{ i.title }}</div>
+  {% if i.summary %}<div class="s">{{ i.summary }}</div>{% endif %}
+  <div class="meta"><span class="chip st-{{ i.status }}">{{ i.status }}</span>
+    {% if i.project_id and pnames[i.project_id] %}<span class="chip">{{ pnames[i.project_id] }}</span>{% endif %}
+    {% for t in i.tags.split(',') if t.strip() %}<span class="chip tag">#{{ t.strip() }}</span>{% endfor %}
+    <span>{{ i.updated_at[:10] }}</span></div>
+</a>
+{% endmacro %}
+
+{% macro composer(csrf, projects, statuses, selected=None) %}
+<form id="new" class="composer" method="post" action="/ideas">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input name="title" placeholder="Capture an idea…" required maxlength="300" autocomplete="off">
+  <textarea name="summary" rows="2" placeholder="Why does it matter? (optional)" maxlength="2000"></textarea>
+  <div class="composer-bar">
+    <select name="project_id" aria-label="Project"><option value="">Unsorted</option>
+      {% for p in projects %}<option value="{{ p.id }}" {{ 'selected' if selected == p.id }}>{{ p.name }}</option>{% endfor %}</select>
+    <select name="status" aria-label="Status">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select>
+    <input name="tags" placeholder="tags, comma-separated" maxlength="300" aria-label="Tags">
+    <button>Save idea</button>
+  </div>
+</form>
+{% endmacro %}

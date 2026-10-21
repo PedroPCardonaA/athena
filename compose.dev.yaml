@@ -1,10 +1,11 @@
 # Builds from source: podman-compose -f compose.dev.yaml up -d --build
+name: athena
 services:
-  ideas:
+  athena:
     build:
       context: .
       dockerfile: Containerfile
-    image: localhost/ideas-saver:dev
+    image: localhost/athena:dev
     ports:
       - "127.0.0.1:8787:8787"   # localhost only; do not expose without TLS + a reverse proxy
     volumes:

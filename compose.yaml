@@ -1,7 +1,8 @@
 # Pulls the prebuilt image. For local development use compose.dev.yaml (builds from source).
+name: athena
 services:
-  ideas:
-    image: ghcr.io/pedropcardonaa/ideas_saver:latest
+  athena:
+    image: ghcr.io/pedropcardonaa/athena:latest
     ports:
       - "127.0.0.1:8787:8787"   # localhost only; do not expose without TLS + a reverse proxy
     volumes:

@@ -1,5 +1,4 @@
 import hmac
-import os
 import secrets
 import time
 
@@ -10,9 +9,9 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from . import db
 
 ph = PasswordHasher()
-COOKIE = "ideas_session"
+COOKIE = "athena_session"
 SESSION_MAX_AGE = 7 * 24 * 3600
-COOKIE_SECURE = os.environ.get("IDEAS_COOKIE_SECURE", "0") == "1"
+COOKIE_SECURE = db.env("COOKIE_SECURE", "0") == "1"
 
 _attempts: list[float] = []
 MAX_ATTEMPTS, WINDOW = 10, 300
@@ -35,7 +34,7 @@ def bootstrap(con):
     """Create the session secret; optionally take the first password from env."""
     if not _setting(con, "secret"):
         _set(con, "secret", secrets.token_urlsafe(48))
-    pw = os.environ.get("IDEAS_ADMIN_PASSWORD", "")
+    pw = db.env("ADMIN_PASSWORD")
     if len(pw) >= MIN_PASSWORD:
         set_password(con, pw)
 
@@ -90,7 +89,7 @@ def csrf_ok(session, token: str) -> bool:
 
 
 def create_token(con, name: str, scope: str) -> str:
-    tok = "ids_" + secrets.token_urlsafe(32)
+    tok = "ath_" + secrets.token_urlsafe(32)
     con.execute("INSERT INTO api_tokens(name,hash,scope) VALUES(?,?,?)", (name, db.hash_token(tok), scope))
     con.commit()
     return tok
