@@ -1,12 +1,9 @@
+# Pulls the prebuilt image. For local development use compose.dev.yaml (builds from source).
 services:
   ideas:
-    build:
-      context: .
-      dockerfile: Containerfile
-    image: localhost/ideas-saver:latest
+    image: ghcr.io/pedropcardonaa/ideas_saver:latest
     ports:
-      - "127.0.0.1:8787:8787"
-    env_file: .env
+      - "127.0.0.1:8787:8787"   # localhost only; do not expose without TLS + a reverse proxy
     volumes:
       - ./data:/data:Z
     read_only: true

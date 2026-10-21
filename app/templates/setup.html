@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block body %}
+<form method="post" action="/setup" class="card narrow">
+<h1>Welcome</h1><p>Choose a password for this instance. It is stored hashed on your machine only.</p>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+<label>Password (min {{ min }} characters) <input type="password" name="password" required minlength="{{ min }}" maxlength="256" autofocus autocomplete="new-password"></label>
+<label>Confirm <input type="password" name="confirm" required maxlength="256" autocomplete="new-password"></label>
+<button>Set password</button></form>{% endblock %}

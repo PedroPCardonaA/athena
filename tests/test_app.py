@@ -57,3 +57,79 @@ def test_api_flow(client):
     assert client.get('/api/ideas?q="NEAR(', headers=H(rd)).status_code == 200
     client.patch(f"/api/ideas/{iid}", json={"title": "renamed"}, headers=H(wr))
     assert client.get("/api/ideas?q=renamed", headers=H(rd)).json()[0]["id"] == iid
+
+
+def test_setup_flow(tmp_path, monkeypatch):
+    monkeypatch.delenv("IDEAS_ADMIN_PASSWORD")
+    app.state.db_path = str(tmp_path / "s.db")
+    with TestClient(app) as c:
+        assert c.get("/", follow_redirects=False).headers["location"] == "/setup"
+        assert c.get("/login", follow_redirects=False).headers["location"] == "/setup"
+        assert c.post("/setup", data={"password": "short", "confirm": "short"}).status_code == 422
+        assert c.post("/setup", data={"password": "a" * 12, "confirm": "b" * 12}).status_code == 422
+        assert c.post("/setup", data={"password": "a" * 12, "confirm": "a" * 12}, follow_redirects=False).status_code == 303
+        assert c.get("/setup").status_code == 404
+        assert c.post("/setup", data={"password": "z" * 12, "confirm": "z" * 12}).status_code == 404
+        assert c.post("/login", data={"password": "a" * 12}, follow_redirects=False).status_code == 303
+
+
+def test_healthz(client):
+    assert client.get("/healthz").json() == {"ok": True}
+
+
+def test_export_import_roundtrip(client, tmp_path):
+    csrf = login(client)
+    client.post("/ideas", data={"title": "idea one", "summary": "s", "csrf": csrf})
+    client.post("/ideas/1/sources", data={"url": "https://x.org/a", "title": "A", "year": "2023", "csrf": csrf})
+    client.post("/ideas/1/notes", data={"body_md": "hello", "csrf": csrf})
+    exp = client.get("/export.json")
+    assert exp.status_code == 200
+    data = exp.json()
+    assert data["ideas"][0]["sources"][0]["url"] == "https://x.org/a"
+
+    # import into a fresh instance
+    app.state.db_path = str(tmp_path / "other.db")
+    auth._attempts.clear()
+    with TestClient(app) as c2:
+        csrf2 = login(c2)
+        up = lambda payload: c2.post("/import", data={"csrf": csrf2}, files={"file": ("e.json", payload, "application/json")}, follow_redirects=False)
+        assert up(exp.content).status_code == 303
+        assert up(exp.content).status_code == 303  # idempotent
+        assert c2.get("/export.json").json()["ideas"] == data["ideas"]
+        assert up(b'{"version":1,"ideas":[{"title":"x"}]}').status_code == 422
+        evil = {"version": 1, "ideas": [{**data["ideas"][0], "sources": [{**data["ideas"][0]["sources"][0], "url": "javascript:alert(1)"}]}]}
+        import json
+        assert up(json.dumps(evil).encode()).status_code == 422
+
+
+def test_bibtex_roundtrip(client):
+    from app import bibtex
+    csrf = login(client)
+    client.post("/ideas", data={"title": "t", "csrf": csrf})
+    bib = """@inproceedings{vaswani2017,
+      title = {Attention {Is} All You Need},
+      author = {Vaswani, Ashish and Shazeer, Noam},
+      year = 2017, doi = {10.5555/3295222.3295349}
+    }
+    @misc{nourl, title={no link}}
+    @article{x, title="Has url", url={https://arxiv.org/abs/1}, year={2020}}"""
+    parsed = bibtex.parse(bib)
+    assert [p["url"] for p in parsed] == ["https://doi.org/10.5555/3295222.3295349", "https://arxiv.org/abs/1"]
+    assert parsed[0]["title"] == "Attention Is All You Need" and parsed[0]["year"] == 2017
+    client.post("/ideas/1/bibtex", data={"bib": bib, "csrf": csrf})
+    out = client.get("/ideas/1/export.bib")
+    assert out.text.count("@") == 2 and "doi.org" in out.text
+
+
+def test_migration_from_v1(tmp_path):
+    path = str(tmp_path / "old.db")
+    import sqlite3
+    old = sqlite3.connect(path)
+    old.executescript(db.MIGRATIONS[0])
+    old.execute("PRAGMA user_version=1")
+    old.execute("INSERT INTO ideas(title) VALUES('kept')")
+    old.commit(); old.close()
+    con = db.connect(path)
+    assert con.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
+    assert con.execute("SELECT title FROM ideas").fetchone()[0] == "kept"
+    assert con.execute("SELECT 1 FROM sqlite_master WHERE name='notes_idea'").fetchone()

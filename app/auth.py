@@ -28,15 +28,27 @@ def _set(con, key, value):
     con.commit()
 
 
+MIN_PASSWORD = 12
+
+
 def bootstrap(con):
-    """Create the session secret, and the password hash from env on first run."""
+    """Create the session secret; optionally take the first password from env."""
     if not _setting(con, "secret"):
         _set(con, "secret", secrets.token_urlsafe(48))
-    if not _setting(con, "pw_hash"):
-        pw = os.environ.get("IDEAS_ADMIN_PASSWORD", "")
-        if len(pw) < 12:
-            raise SystemExit("Set IDEAS_ADMIN_PASSWORD (min 12 chars) for first run")
-        _set(con, "pw_hash", ph.hash(pw))
+    pw = os.environ.get("IDEAS_ADMIN_PASSWORD", "")
+    if len(pw) >= MIN_PASSWORD:
+        set_password(con, pw)
+
+
+def is_configured(con) -> bool:
+    return _setting(con, "pw_hash") is not None
+
+
+def set_password(con, pw: str) -> bool:
+    """First-run only: never overwrites an existing password. True if it was set."""
+    cur = con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('pw_hash',?)", (ph.hash(pw),))
+    con.commit()
+    return cur.rowcount == 1
 
 
 def rate_limited() -> bool:

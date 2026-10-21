@@ -8,7 +8,8 @@ STATUSES = ("seed", "exploring", "active", "parked", "dropped")
 KINDS = ("paper", "repo", "blog", "dataset", "other")
 NOTE_KINDS = ("user", "agent_report")
 
-SCHEMA = """
+MIGRATIONS = [
+"""
 CREATE TABLE ideas(
   id INTEGER PRIMARY KEY,
   title TEXT NOT NULL,
@@ -48,7 +49,12 @@ CREATE TABLE api_tokens(
 );
 CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE VIRTUAL TABLE fts USING fts5(title, summary, body_md, tags);
+""",
 """
+CREATE INDEX notes_idea ON notes(idea_id, created_at);
+CREATE INDEX ideas_updated ON ideas(updated_at);
+""",
+]
 
 
 def connect(path=None):
@@ -59,9 +65,10 @@ def connect(path=None):
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
     con.execute("PRAGMA journal_mode=WAL")
-    if con.execute("PRAGMA user_version").fetchone()[0] == 0:
-        con.executescript(SCHEMA)
-        con.execute("PRAGMA user_version=1")
+    version = con.execute("PRAGMA user_version").fetchone()[0]
+    for n, script in enumerate(MIGRATIONS[version:], start=version + 1):
+        con.executescript(script)
+        con.execute(f"PRAGMA user_version={n}")
         con.commit()
     return con
 
@@ -163,3 +170,52 @@ def add_note(con, idea_id, body_md, kind="user"):
     con.execute("UPDATE ideas SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (idea_id,))
     con.commit()
     return cur.lastrowid
+
+
+EXPORT_VERSION = 1
+
+
+def export_all(con):
+    ideas = []
+    for i in con.execute("SELECT * FROM ideas ORDER BY id"):
+        d = {k: i[k] for k in ("title", "summary", "body_md", "status", "tags", "created_at", "updated_at")}
+        d["sources"] = [
+            {k: r[k] for k in ("url", "title", "authors", "year", "kind", "note", "added_by", "created_at")}
+            for r in con.execute("SELECT * FROM sources WHERE idea_id=? ORDER BY id", (i["id"],))
+        ]
+        d["notes"] = [
+            {k: r[k] for k in ("kind", "body_md", "created_at")}
+            for r in con.execute("SELECT * FROM notes WHERE idea_id=? ORDER BY id", (i["id"],))
+        ]
+        ideas.append(d)
+    return {"version": EXPORT_VERSION, "ideas": ideas}
+
+
+def import_all(con, data):
+    """Import validated export data in one transaction. Ideas matching an existing
+    (title, created_at) are skipped. Returns (ideas_added, ideas_skipped)."""
+    added = skipped = 0
+    try:
+        for d in data["ideas"]:
+            if con.execute("SELECT 1 FROM ideas WHERE title=? AND created_at=?", (d["title"], d["created_at"])).fetchone():
+                skipped += 1
+                continue
+            cur = con.execute(
+                "INSERT INTO ideas(title,summary,body_md,status,tags,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (d["title"], d["summary"], d["body_md"], d["status"], d["tags"], d["created_at"], d["updated_at"]),
+            )
+            iid = cur.lastrowid
+            for r in d["sources"]:
+                con.execute(
+                    "INSERT OR IGNORE INTO sources(idea_id,url,title,authors,year,kind,note,added_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (iid, r["url"], r["title"], r["authors"], r["year"], r["kind"], r["note"], r["added_by"], r["created_at"]),
+                )
+            for r in d["notes"]:
+                con.execute("INSERT INTO notes(idea_id,kind,body_md,created_at) VALUES(?,?,?,?)", (iid, r["kind"], r["body_md"], r["created_at"]))
+            _reindex(con, iid)
+            added += 1
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    return added, skipped

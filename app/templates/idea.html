@@ -31,6 +31,12 @@
 <label>Why relevant <textarea name="note" rows="2" maxlength="5000"></textarea></label>
 <button>Add</button></form></details>
 
+<details class="card"><summary>BibTeX</summary>
+<p><a href="/ideas/{{ idea.id }}/export.bib">Download .bib</a></p>
+<form method="post" action="/ideas/{{ idea.id }}/export.bibtex"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label>Import entries (need a url or doi) <textarea name="bib" rows="5" required maxlength="500000"></textarea></label>
+<button>Import</button></form></details>
+
 <h2>Journal</h2>
 <form method="post" action="/ideas/{{ idea.id }}/notes" class="card">
 <input type="hidden" name="csrf" value="{{ csrf }}">

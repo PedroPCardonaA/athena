@@ -4,14 +4,14 @@ from typing import Literal
 from urllib.parse import urlparse
 
 import nh3
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, Field, field_validator
 
-from . import auth, db
+from . import auth, bibtex, db
 
 HERE = os.path.dirname(__file__)
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
@@ -67,7 +67,11 @@ class NeedLogin(Exception):
 
 @app.exception_handler(NeedLogin)
 async def _need_login(request, exc):
-    return RedirectResponse("/login", 303)
+    con = db.connect(request.app.state.db_path)
+    try:
+        return RedirectResponse("/login" if auth.is_configured(con) else "/setup", 303)
+    finally:
+        con.close()
 
 
 def session(request: Request, con=Depends(get_con)):
@@ -94,13 +98,47 @@ def safe_url(url: str) -> str:
     return url.strip()
 
 
+@app.get("/healthz")
+def healthz(con=Depends(get_con)):
+    con.execute("SELECT 1")
+    return {"ok": True}
+
+
+@app.get("/setup")
+def setup_form(request: Request, con=Depends(get_con)):
+    if auth.is_configured(con):
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "setup.html", {"error": "", "min": auth.MIN_PASSWORD})
+
+
+@app.post("/setup")
+def setup(request: Request, password: str = Form(..., max_length=256), confirm: str = Form(..., max_length=256),
+          con=Depends(get_con)):
+    if auth.is_configured(con):
+        raise HTTPException(404)
+    err = ""
+    if len(password) < auth.MIN_PASSWORD:
+        err = f"Use at least {auth.MIN_PASSWORD} characters"
+    elif password != confirm:
+        err = "Passwords do not match"
+    elif not auth.set_password(con, password):
+        raise HTTPException(404)
+    if err:
+        return templates.TemplateResponse(request, "setup.html", {"error": err, "min": auth.MIN_PASSWORD}, status_code=422)
+    return RedirectResponse("/login", 303)
+
+
 @app.get("/login")
-def login_form(request: Request):
+def login_form(request: Request, con=Depends(get_con)):
+    if not auth.is_configured(con):
+        return RedirectResponse("/setup", 303)
     return templates.TemplateResponse(request, "login.html", {"error": ""})
 
 
 @app.post("/login")
-def login(request: Request, password: str = Form(...), con=Depends(get_con)):
+def login(request: Request, password: str = Form(..., max_length=256), con=Depends(get_con)):
+    if not auth.is_configured(con):
+        return RedirectResponse("/setup", 303)
     if auth.rate_limited() or not auth.check_password(con, password):
         return templates.TemplateResponse(request, "login.html", {"error": "Invalid or too many attempts"}, status_code=401)
     resp = RedirectResponse("/", 303)
@@ -197,6 +235,42 @@ def ui_del_note(nid: int, con=Depends(get_con)):
     return RedirectResponse(f"/ideas/{row['idea_id']}", 303)
 
 
+@app.get("/ideas/{iid}/export.bib")
+def ui_bib(iid: int, s=Depends(session), con=Depends(get_con)):
+    _idea_or_404(con, iid)
+    return PlainTextResponse(bibtex.dump(db.sources_of(con, iid)), headers={
+        "Content-Disposition": f'attachment; filename="idea-{iid}.bib"'})
+
+
+@app.post("/ideas/{iid}/bibtex", dependencies=[Depends(csrf)])
+def ui_import_bib(iid: int, bib: str = Form(..., max_length=500_000), con=Depends(get_con)):
+    _idea_or_404(con, iid)
+    for src in bibtex.parse(bib):
+        db.add_source(con, iid, **src, added_by="user")
+    return RedirectResponse(f"/ideas/{iid}", 303)
+
+
+@app.get("/export.json")
+def ui_export(s=Depends(session), con=Depends(get_con)):
+    return JSONResponse(db.export_all(con), headers={"Content-Disposition": 'attachment; filename="ideas-export.json"'})
+
+
+MAX_IMPORT = 20 * 1024 * 1024
+
+
+@app.post("/import", dependencies=[Depends(csrf)])
+async def ui_import(file: UploadFile = File(...), con=Depends(get_con)):
+    raw = await file.read(MAX_IMPORT + 1)
+    if len(raw) > MAX_IMPORT:
+        raise HTTPException(413, "file too large")
+    try:
+        data = ExportIn.model_validate_json(raw).model_dump()
+    except ValueError as e:
+        raise HTTPException(422, f"invalid export file: {str(e)[:300]}")
+    db.import_all(con, data)
+    return RedirectResponse("/", 303)
+
+
 @app.get("/tokens")
 def tokens_page(request: Request, s=Depends(session), con=Depends(get_con)):
     rows = con.execute("SELECT id,name,scope,last_used FROM api_tokens ORDER BY id").fetchall()
@@ -265,8 +339,34 @@ class NoteIn(BaseModel):
     kind: Literal[db.NOTE_KINDS] = "agent_report"
 
 
+class ExportSource(SourceIn):
+    added_by: Literal["user", "agent"] = "user"
+    created_at: str = Field(max_length=40)
+
+
+class ExportNote(NoteIn):
+    created_at: str = Field(max_length=40)
+
+
+class ExportIdea(IdeaIn):
+    created_at: str = Field(max_length=40)
+    updated_at: str = Field(max_length=40)
+    sources: list[ExportSource] = []
+    notes: list[ExportNote] = []
+
+
+class ExportIn(BaseModel):
+    version: Literal[1]
+    ideas: list[ExportIdea]
+
+
 def _d(rows):
     return [dict(r) for r in rows]
+
+
+@app.get("/api/export", dependencies=[Depends(api_auth)])
+def api_export(con=Depends(get_con)):
+    return db.export_all(con)
 
 
 @app.get("/api/ideas", dependencies=[Depends(api_auth)])
