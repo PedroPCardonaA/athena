@@ -1,0 +1,19 @@
+services:
+  ideas:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/ideas-saver:latest
+    ports:
+      - "127.0.0.1:8787:8787"
+    env_file: .env
+    volumes:
+      - ./data:/data:Z
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges
+    userns_mode: keep-id:uid=10001,gid=10001
+    restart: unless-stopped

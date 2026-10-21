@@ -1,0 +1,45 @@
+{% extends "base.html" %}{% block title %}{{ idea.title }}{% endblock %}{% block body %}
+<p><a href="/">← all ideas</a></p>
+<form method="post" action="/ideas/{{ idea.id }}" class="card">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label>Title <input name="title" value="{{ idea.title }}" required maxlength="300"></label>
+<label>Summary <textarea name="summary" rows="2" maxlength="2000">{{ idea.summary }}</textarea></label>
+<div class="row"><label>Status <select name="status">{% for s in statuses %}<option {{ 'selected' if s == idea.status }}>{{ s }}</option>{% endfor %}</select></label>
+<label>Tags <input name="tags" value="{{ idea.tags }}" maxlength="300"></label></div>
+<label>Notes (markdown) <textarea name="body_md" rows="10" maxlength="100000">{{ idea.body_md }}</textarea></label>
+<button>Save</button></form>
+{% if idea.body_md %}<section class="card md">{{ idea.body_md | md | safe }}</section>{% endif %}
+
+<h2>Sources ({{ sources | length }})</h2>
+<ul class="list">
+{% for s in sources %}
+<li><a href="{{ s.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ s.title or s.url }}</a>
+<span class="badge">{{ s.kind }}</span>{% if s.added_by == 'agent' %}<span class="badge agent">agent</span>{% endif %}
+<small>{{ s.authors }}{% if s.year %} · {{ s.year }}{% endif %}</small>
+{% if s.note %}<p>{{ s.note }}</p>{% endif %}
+<form method="post" action="/sources/{{ s.id }}/delete" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">remove</button></form></li>
+{% endfor %}
+</ul>
+<details class="card"><summary>Add source</summary>
+<form method="post" action="/ideas/{{ idea.id }}/sources">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label>URL <input type="url" name="url" required maxlength="2000"></label>
+<label>Title <input name="title" maxlength="500"></label>
+<div class="row"><label>Authors <input name="authors" maxlength="500"></label>
+<label>Year <input type="number" name="year" min="1000" max="2100"></label>
+<label>Kind <select name="kind">{% for k in kinds %}<option>{{ k }}</option>{% endfor %}</select></label></div>
+<label>Why relevant <textarea name="note" rows="2" maxlength="5000"></textarea></label>
+<button>Add</button></form></details>
+
+<h2>Journal</h2>
+<form method="post" action="/ideas/{{ idea.id }}/notes" class="card">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<textarea name="body_md" rows="3" required maxlength="100000" placeholder="Add a note…"></textarea><button>Add note</button></form>
+{% for n in notes %}
+<article class="card {{ n.kind }}"><small>{{ n.created_at }} · {{ 'agent report' if n.kind == 'agent_report' else 'note' }}</small>
+<div class="md">{{ n.body_md | md | safe }}</div>
+<form method="post" action="/notes/{{ n.id }}/delete" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">delete</button></form></article>
+{% endfor %}
+
+<form method="post" action="/ideas/{{ idea.id }}/delete" class="danger"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Delete idea</button></form>
+{% endblock %}

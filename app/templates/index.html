@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block body %}
+<form method="get" class="row">
+<input name="q" value="{{ q }}" placeholder="Search ideas…" maxlength="200">
+<select name="status"><option value="">any status</option>{% for s in statuses %}<option {{ 'selected' if s == status }}>{{ s }}</option>{% endfor %}</select>
+<button>Search</button></form>
+
+<details class="card"><summary>New idea</summary>
+<form method="post" action="/ideas">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label>Title <input name="title" required maxlength="300"></label>
+<label>Summary <textarea name="summary" rows="3" maxlength="2000"></textarea></label>
+<div class="row"><label>Status <select name="status">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></label>
+<label>Tags (comma-sep) <input name="tags" maxlength="300"></label></div>
+<button>Create</button></form></details>
+
+<ul class="list">
+{% for i in ideas %}
+<li><a href="/ideas/{{ i.id }}">{{ i.title }}</a> <span class="badge {{ i.status }}">{{ i.status }}</span>
+<small>{{ i.tags }} · {{ i.updated_at }}</small><p>{{ i.summary }}</p></li>
+{% else %}<li>No ideas yet.</li>{% endfor %}
+</ul>{% endblock %}

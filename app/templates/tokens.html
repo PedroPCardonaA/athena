@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block body %}
+<p><a href="/">← all ideas</a></p><h1>API tokens</h1>
+{% if new_token %}<div class="card"><p>Copy now, it will not be shown again:</p><pre>{{ new_token }}</pre></div>{% endif %}
+<ul class="list">{% for t in tokens %}
+<li>{{ t.name }} <span class="badge">{{ t.scope }}</span><small>last used: {{ t.last_used or 'never' }}</small>
+<form method="post" action="/tokens/{{ t.id }}/delete" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">revoke</button></form></li>
+{% else %}<li>No tokens.</li>{% endfor %}</ul>
+<form method="post" action="/tokens" class="card"><input type="hidden" name="csrf" value="{{ csrf }}">
+<div class="row"><label>Name <input name="name" required maxlength="80"></label>
+<label>Scope <select name="scope"><option>write</option><option>read</option></select></label></div>
+<button>Create token</button></form>{% endblock %}
