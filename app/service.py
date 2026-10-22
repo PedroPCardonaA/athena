@@ -1,29 +1,44 @@
 """Domain operations shared by the web UI and the MCP server, so rules live in one place."""
+import re
 from urllib.parse import urlparse
 
 from . import db
 
 MAX_BATCH = 50
+DOC_EXTS = (".md", ".markdown", ".txt", ".pdf")
+# the only non-http form a source url may take: a file uploaded through the web UI
+LOCAL_DOC = re.compile(r"/docs/([0-9a-f]{16})/([A-Za-z0-9._-]{1,100})")
 
 
-def safe_url(url: str) -> str:
-    u = urlparse((url or "").strip())
+def local_doc(url: str):
+    """(id, filename) if url is an uploaded-document reference, else None."""
+    m = LOCAL_DOC.fullmatch(url or "")
+    return m.groups() if m and m.group(2).lower().endswith(DOC_EXTS) and ".." not in m.group(2) else None
+
+
+def safe_url(url: str, allow_local: bool = False) -> str:
+    url = (url or "").strip()
+    if allow_local and local_doc(url):
+        return url
+    u = urlparse(url)
     if u.scheme not in ("http", "https") or not u.netloc:
         raise ValueError("url must be http(s)")
-    return url.strip()
+    return url
 
 
 def domain(url: str) -> str:
+    if local_doc(url):
+        return "local file"
     host = urlparse(url or "").netloc.lower()
     return host.removeprefix("www.")
 
 
 def add_source(con, *, idea_id=None, project_id=None, url, title="", authors="", year=None,
-               kind="other", note="", added_by="user"):
+               kind="other", note="", added_by="user", allow_local=False):
     """Add a source to exactly one idea or one project. Returns (id, created)."""
     if (idea_id is None) == (project_id is None):
         raise ValueError("give exactly one of idea_id or project_id")
-    fields = dict(url=safe_url(url), title=title, authors=authors, year=year, kind=kind, note=note, added_by=added_by)
+    fields = dict(url=safe_url(url, allow_local), title=title, authors=authors, year=year, kind=kind, note=note, added_by=added_by)
     if idea_id is not None:
         if not db.get_idea(con, idea_id):
             raise LookupError(f"idea {idea_id} not found")

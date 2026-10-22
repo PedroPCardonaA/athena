@@ -82,6 +82,10 @@ def build(read_only: bool = False, db_path: str | None = None) -> FastMCP:
                                               added_by="agent", **item.model_dump())
         except (ValueError, LookupError) as e:
             raise ToolError(str(e))
+        if created:
+            parent = db.get_idea(con, idea_id) if idea_id else db.get_project(con, project_id)
+            db.log_change(con, "add", "source", sid, "add_source", item.title or item.url, item.url,
+                          idea_id=idea_id, project_id=project_id or (parent["project_id"] if idea_id else None))
         return {"id": sid, "created": created, "url": item.url}
 
     # ------------------------------------------------------------------ read tools
@@ -150,9 +154,11 @@ def build(read_only: bool = False, db_path: str | None = None) -> FastMCP:
             """Create a project to group ideas."""
             with connect() as con:
                 try:
-                    return {"id": db.create_project(con, name.strip(), description)}
+                    pid = db.create_project(con, name.strip(), description)
                 except sqlite3.IntegrityError:
                     raise ToolError("a project with that name already exists")
+                db.log_change(con, "add", "project", pid, "create_project", name.strip(), project_id=pid)
+                return {"id": pid}
 
         @mcp.tool(annotations=EDIT)
         def update_project(project_id: Id, name: Annotated[str | None, Field(min_length=1, max_length=80)] = None,
@@ -160,19 +166,27 @@ def build(read_only: bool = False, db_path: str | None = None) -> FastMCP:
             """Rename a project or change its description (omitted fields stay unchanged)."""
             with connect() as con:
                 p = need_project(con, project_id)
+                new_name = (name or p["name"]).strip()
+                new_desc = p["description"] if description is None else description
                 try:
-                    db.update_project(con, project_id, (name or p["name"]).strip(),
-                                      p["description"] if description is None else description)
+                    db.update_project(con, project_id, new_name, new_desc)
                 except sqlite3.IntegrityError:
                     raise ToolError("a project with that name already exists")
+                changed = [k for k, old, new in (("name", p["name"], new_name), ("description", p["description"], new_desc))
+                           if old != new]
+                if changed:
+                    db.log_change(con, "update", "project", project_id, "update_project", new_name,
+                                  "changed: " + ", ".join(changed), project_id=project_id)
                 return {"ok": True}
 
         @mcp.tool(annotations=EDIT)
         def set_project_summary(project_id: Id, summary_md: Annotated[str, Field(max_length=20000)]) -> dict[str, Any]:
             """Replace the project's overview summary (Markdown). Shown at the top of the project page."""
             with connect() as con:
-                need_project(con, project_id)
+                p = need_project(con, project_id)
                 db.set_project_summary(con, project_id, summary_md)
+                db.log_change(con, "update", "project", project_id, "set_project_summary", p["name"],
+                              "changed: summary", project_id=project_id)
                 return {"ok": True}
 
         @mcp.tool(annotations=ADD)
@@ -184,7 +198,10 @@ def build(read_only: bool = False, db_path: str | None = None) -> FastMCP:
             """Create an idea, optionally inside a project. Tags are comma-separated."""
             with connect() as con:
                 check_project_ref(con, project_id)
-                return {"id": db.create_idea(con, title.strip(), summary, body_md, status, tags, project_id or None)}
+                iid = db.create_idea(con, title.strip(), summary, body_md, status, tags, project_id or None)
+                db.log_change(con, "add", "idea", iid, "create_idea", title.strip(), idea_id=iid,
+                              project_id=project_id or None)
+                return {"id": iid}
 
         @mcp.tool(annotations=EDIT)
         def update_idea(idea_id: Id,
@@ -196,10 +213,18 @@ def build(read_only: bool = False, db_path: str | None = None) -> FastMCP:
                         project_id: Annotated[int | None, Field(ge=0, description="move to this project; 0 = Unsorted")] = None) -> dict[str, Any]:
             """Change fields of an idea (omitted fields stay unchanged). body_md REPLACES the whole text, so read the idea first."""
             with connect() as con:
-                need_idea(con, idea_id)
+                old = need_idea(con, idea_id)
                 check_project_ref(con, project_id)
+                new = dict(title=title, summary=summary, body_md=body_md, status=status, tags=tags,
+                           project_id=(project_id or None) if project_id is not None else None)
                 db.update_idea(con, idea_id, title=title, summary=summary, body_md=body_md, status=status,
                                tags=tags, project_id=project_id)
+                changed = [k for k, v in new.items()
+                           if (v is not None or (k == "project_id" and project_id == 0)) and old[k] != v]
+                if changed:
+                    cur = db.get_idea(con, idea_id)
+                    db.log_change(con, "update", "idea", idea_id, "update_idea", cur["title"],
+                                  "changed: " + ", ".join(changed), idea_id=idea_id, project_id=cur["project_id"])
                 return {"ok": True}
 
         @mcp.tool(annotations=ADD_IDEMPOTENT)
@@ -227,8 +252,11 @@ def build(read_only: bool = False, db_path: str | None = None) -> FastMCP:
                      kind: Literal[db.NOTE_KINDS] = "agent_report") -> dict[str, Any]:
             """Append a note to an idea's journal. Use kind 'agent_report' for your own analysis or research reports."""
             with connect() as con:
-                need_idea(con, idea_id)
-                return {"id": db.add_note(con, idea_id, body_md, kind)}
+                idea = need_idea(con, idea_id)
+                nid = db.add_note(con, idea_id, body_md, kind)
+                db.log_change(con, "add", "note", nid, "add_note", idea["title"], kind, idea_id=idea_id,
+                              project_id=idea["project_id"])
+                return {"id": nid}
 
     # ------------------------------------------------------------------ resources
 
