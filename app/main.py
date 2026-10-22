@@ -1,11 +1,13 @@
 import os
+import re
+import secrets
 import sqlite3
 from contextlib import asynccontextmanager
 from typing import Literal
 
 import nh3
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
@@ -224,17 +226,66 @@ def ui_add_source(iid: int, url: str = Form(..., max_length=2000), title: str = 
                   kind: Literal[db.KINDS] = Form("other"), note: str = Form("", max_length=5000), con=Depends(get_con)):
     _idea_or_404(con, iid)
     try:
-        url = service.safe_url(url)
+        url = service.safe_url(url, allow_local=True)
     except ValueError:
         raise HTTPException(422, "url must be http(s)")
     db.add_source(con, iid, url, title, authors, opt_int(year, 1000, 2100, "year"), kind, note, "user")
     return RedirectResponse(f"/ideas/{iid}", 303)
 
 
+MAX_DOC = 20 * 1024 * 1024
+
+
+def docs_dir(request: Request) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(request.app.state.db_path or db.DB_PATH)), "docs")
+
+
+async def save_doc(request: Request, file: UploadFile) -> tuple[str, str]:
+    """Store an uploaded document under <data>/docs/<id>/<name>; returns (source url, clean name)."""
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename((file.filename or "").replace("\\", "/"))).strip("._") or "document"
+    name = name[-100:]
+    if not name.lower().endswith(service.DOC_EXTS):
+        raise HTTPException(422, "only " + ", ".join(service.DOC_EXTS) + " files are supported")
+    raw = await file.read(MAX_DOC + 1)
+    if len(raw) > MAX_DOC:
+        raise HTTPException(413, "file too large (max 20 MB)")
+    if name.lower().endswith(".pdf") and not raw.startswith(b"%PDF-"):
+        raise HTTPException(422, "not a PDF file")
+    did = secrets.token_hex(8)
+    folder = os.path.join(docs_dir(request), did)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, name), "wb") as f:
+        f.write(raw)
+    return f"/docs/{did}/{name}", name
+
+
+@app.get("/docs/{did}/{name}")
+def get_doc(did: str, name: str, request: Request, s=Depends(session)):
+    if not service.local_doc(f"/docs/{did}/{name}"):
+        raise HTTPException(404)
+    root = os.path.realpath(docs_dir(request))
+    path = os.path.realpath(os.path.join(root, did, name))
+    if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
+        raise HTTPException(404)
+    return FileResponse(path, media_type="application/octet-stream", filename=name, content_disposition_type="attachment")
+
+
+@app.post("/ideas/{iid}/upload", dependencies=[Depends(csrf)])
+async def ui_upload_idea_doc(iid: int, request: Request, file: UploadFile = File(...), title: str = Form("", max_length=500),
+                             authors: str = Form("", max_length=500), year: str = Form(""),
+                             kind: Literal[db.KINDS] = Form("other"), note: str = Form("", max_length=5000),
+                             con=Depends(get_con)):
+    _idea_or_404(con, iid)
+    year = opt_int(year, 1000, 2100, "year")
+    url, name = await save_doc(request, file)
+    db.add_source(con, iid, url, title or name, authors, year, kind, note, "user")
+    return RedirectResponse(f"/ideas/{iid}", 303)
+
+
 @app.post("/sources/like", dependencies=[Depends(csrf)])
 def ui_like_source(url: str = Form(..., max_length=2000), next: str = Form("/", max_length=500), con=Depends(get_con)):
     try:
-        url = service.safe_url(url)
+        url = service.safe_url(url, allow_local=True)
     except ValueError as e:
         raise HTTPException(422, str(e))
     db.toggle_like(con, url)
@@ -356,6 +407,18 @@ def ui_project_add_source(pid: int, url: str = Form(..., max_length=2000), title
     return RedirectResponse(f"/p/{pid}#sources", 303)
 
 
+@app.post("/projects/{pid}/upload", dependencies=[Depends(csrf)])
+async def ui_upload_project_doc(pid: int, request: Request, file: UploadFile = File(...), title: str = Form("", max_length=500),
+                                authors: str = Form("", max_length=500), year: str = Form(""),
+                                kind: Literal[db.KINDS] = Form("other"), note: str = Form("", max_length=5000),
+                                con=Depends(get_con)):
+    _project_or_404(con, pid)
+    year = opt_int(year, 1000, 2100, "year")
+    url, name = await save_doc(request, file)
+    db.add_project_source(con, pid, url, title or name, authors, year, kind, note, "user")
+    return RedirectResponse(f"/p/{pid}#sources", 303)
+
+
 @app.post("/project-sources/{sid}/delete", dependencies=[Depends(csrf)])
 def ui_project_del_source(sid: int, con=Depends(get_con)):
     row = con.execute("SELECT project_id FROM project_sources WHERE id=?", (sid,)).fetchone()
@@ -416,6 +479,21 @@ def settings_page(request: Request, s=Depends(session), con=Depends(get_con)):
     return page(request, "settings.html", s, con, current_project=None)
 
 
+HISTORY_PAGE = 100
+
+
+@app.get("/history")
+def history_page(request: Request, s=Depends(session), con=Depends(get_con)):
+    q = request.query_params
+    action = q.get("action", "") if q.get("action") in db.CHANGE_ACTIONS else ""
+    etype = q.get("type", "") if q.get("type") in db.CHANGE_ENTITIES else ""
+    n = opt_int(q.get("page", ""), lo=1, hi=10**6, what="page") or 1
+    rows = db.list_changes(con, action, etype, HISTORY_PAGE + 1, (n - 1) * HISTORY_PAGE)
+    return page(request, "history.html", s, con, current_project=None, changes=rows[:HISTORY_PAGE],
+                action=action, etype=etype, pg=n, has_more=len(rows) > HISTORY_PAGE,
+                actions=db.CHANGE_ACTIONS, entities=db.CHANGE_ENTITIES)
+
+
 # ---------- import/export models ----------
 
 class IdeaIn(BaseModel):
@@ -442,7 +520,7 @@ class SourceIn(BaseModel):
     @field_validator("url")
     @classmethod
     def _http_only(cls, v):
-        return service.safe_url(v)
+        return service.safe_url(v, allow_local=True)  # uploaded-doc references round-trip through export
 
 
 class NoteIn(BaseModel):

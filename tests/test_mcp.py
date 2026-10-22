@@ -157,3 +157,29 @@ def test_stdio_subprocess_handshake_is_clean(dbfile):
         finally:
             proc.kill()
             proc.wait()
+
+
+async def test_agent_changes_are_logged(dbfile):
+    async with create_connected_server_and_client_session(build(db_path=dbfile)._mcp_server) as c:
+        pid = (await call(c, "create_project", name="T"))["id"]
+        await call(c, "update_project", project_id=pid, description="d")
+        await call(c, "update_project", project_id=pid)                      # no-op: not logged
+        await call(c, "set_project_summary", project_id=pid, summary_md="s")
+        i = (await call(c, "create_idea", title="I", project_id=pid))["id"]
+        await call(c, "update_idea", idea_id=i, status="active", tags="x")
+        await call(c, "update_idea", idea_id=i, status="active")             # unchanged: not logged
+        await call(c, "add_source", idea_id=i, url="https://a.org")
+        await call(c, "add_source", idea_id=i, url="https://a.org")          # duplicate: not logged
+        await call(c, "add_sources", project_id=pid, sources=[{"url": "https://b.org"}, {"url": "https://c.org"}])
+        await call(c, "add_note", idea_id=i, body_md="n")
+        assert "error" in await call(c, "add_source", idea_id=i, url="javascript:1")
+    rows = db.list_changes(db.connect(dbfile))
+    got = sorted((r["tool"], r["action"], r["entity_type"]) for r in rows)
+    assert got == sorted([
+        ("create_project", "add", "project"), ("update_project", "update", "project"),
+        ("set_project_summary", "update", "project"), ("create_idea", "add", "idea"),
+        ("update_idea", "update", "idea"), ("add_source", "add", "source"), ("add_source", "add", "source"),
+        ("add_source", "add", "source"), ("add_note", "add", "note")])
+    upd = next(r for r in rows if r["tool"] == "update_idea")
+    assert upd["detail"] == "changed: status, tags" and upd["project_id"] == pid
+    assert len(db.list_changes(db.connect(dbfile), action="add", entity_type="source")) == 3

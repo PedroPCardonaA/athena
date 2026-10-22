@@ -1,0 +1,38 @@
+{% extends "base.html" %}{% block title %}Agent history · Athena{% endblock %}{% block body %}
+<h1 class="page-title">Agent history</h1>
+<p><small>Everything an AI agent added or changed through MCP, newest first.</small></p>
+
+<div class="chips">
+  <a class="chip {{ 'agent' if not action }}" href="/history{{ '?type=' ~ etype if etype }}">all actions</a>
+  {% for a in actions %}<a class="chip {{ 'agent' if action == a }}" href="/history?action={{ a }}{{ '&type=' ~ etype if etype }}">{{ a }}</a>{% endfor %}
+  <span class="chip tag">type</span>
+  <a class="chip {{ 'agent' if not etype }}" href="/history{{ '?action=' ~ action if action }}">all</a>
+  {% for t in entities %}<a class="chip {{ 'agent' if etype == t }}" href="/history?type={{ t }}{{ '&action=' ~ action if action }}">{{ t }}</a>{% endfor %}
+</div>
+
+<div class="rows">
+{% for c in changes %}
+  <div class="row">
+    <div class="meta">
+      <span class="chip agent">{{ c.action }}</span>
+      <span class="chip">{{ c.entity_type }}</span>
+      <span>{{ c.created_at }}</span>
+      <span>via {{ c.tool }}</span>
+    </div>
+    <div>
+      {% if c.idea_id %}<a href="/ideas/{{ c.idea_id }}">{{ c.title or 'idea ' ~ c.idea_id }}</a>
+      {% elif c.project_id %}<a href="/p/{{ c.project_id }}">{{ c.title or 'project ' ~ c.project_id }}</a>
+      {% else %}{{ c.title }}{% endif %}
+      {% if c.detail %}<small> — {{ c.detail }}</small>{% endif %}
+    </div>
+  </div>
+{% else %}
+  <p>No agent changes yet.</p>
+{% endfor %}
+</div>
+
+<p>
+  {% if pg > 1 %}<a href="/history?page={{ pg - 1 }}{{ '&action=' ~ action if action }}{{ '&type=' ~ etype if etype }}">← Newer</a>{% endif %}
+  {% if has_more %}<a href="/history?page={{ pg + 1 }}{{ '&action=' ~ action if action }}{{ '&type=' ~ etype if etype }}">Older →</a>{% endif %}
+</p>
+{% endblock %}

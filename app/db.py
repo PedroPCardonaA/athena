@@ -95,6 +95,21 @@ CREATE TABLE liked_urls(
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """,
+"""
+CREATE TABLE agent_changes(
+  id INTEGER PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER,
+  idea_id INTEGER,
+  project_id INTEGER,
+  tool TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX agent_changes_created ON agent_changes(created_at, id);
+""",
 ]
 
 
@@ -290,6 +305,32 @@ def add_note(con, idea_id, body_md, kind="user"):
     con.execute("UPDATE ideas SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (idea_id,))
     con.commit()
     return cur.lastrowid
+
+
+CHANGE_ACTIONS = ("add", "update")
+CHANGE_ENTITIES = ("project", "idea", "source", "note")
+
+
+def log_change(con, action, entity_type, entity_id, tool, title="", detail="", idea_id=None, project_id=None):
+    """Record one agent write. No foreign keys: history outlives the rows it describes."""
+    con.execute(
+        "INSERT INTO agent_changes(action,entity_type,entity_id,idea_id,project_id,tool,title,detail) VALUES(?,?,?,?,?,?,?,?)",
+        (action, entity_type, entity_id, idea_id, project_id, tool, title[:300], detail[:500]),
+    )
+    con.commit()
+
+
+def list_changes(con, action="", entity_type="", limit=100, offset=0):
+    sql, args, where = "SELECT * FROM agent_changes", [], []
+    if action in CHANGE_ACTIONS:
+        where.append("action=?")
+        args.append(action)
+    if entity_type in CHANGE_ENTITIES:
+        where.append("entity_type=?")
+        args.append(entity_type)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return con.execute(sql + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
 
 
 EXPORT_VERSION = 1

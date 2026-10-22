@@ -28,6 +28,8 @@ Read (always available): `list_projects`, `get_project` (summary, ideas, own + r
 
 Write (hidden with `--read-only`): `create_project`, `update_project`, `set_project_summary`, `create_idea`, `update_idea` (partial; `project_id` moves it, `0` = Unsorted), `add_source` / `add_sources` (to an idea **or** a project; duplicates ignored; max 50 per batch), `add_note` (default kind `agent_report`).
 
+Every successful write is recorded in the **History** page of the web UI (action add/update, entity type, tool, changed fields). Agents can only cite http(s) URLs; local documents are uploaded by you in the UI.
+
 There are deliberately **no delete tools**; deleting stays a human action in the web UI. Agent-added sources and notes are labelled "agent" in the UI. Sources in `get_project`'s `all_sources` carry a `liked` flag (the researcher's ★ relevance marks); liking is a UI-only action, agents cannot change it.
 
 ## Resources

@@ -323,3 +323,46 @@ def test_like_survives_export_import(client, tmp_path):
         import json
         c2.post("/import", files={"file": ("e.json", json.dumps(exp))}, data={"csrf": csrf2})
         assert db.liked_urls(db.connect(app.state.db_path)) == {"https://x.org/mid"}
+
+
+def test_local_documents(client, tmp_path):
+    csrf = login(client)
+    client.post("/ideas", data={"title": "i", "csrf": csrf})
+    client.post("/projects", data={"name": "P", "csrf": csrf})
+    up = lambda url, name, body, **kw: client.post(url, data={"csrf": csrf}, files={"file": (name, body)}, follow_redirects=False, **kw)
+    assert up("/ideas/1/upload", "My Notes.md", b"# hi").status_code == 303
+    page = client.get("/ideas/1").text
+    import re
+    href = re.search(r'href="(/docs/[0-9a-f]{16}/My_Notes\.md)"', page).group(1)
+    r = client.get(href)
+    assert r.status_code == 200 and r.content == b"# hi"
+    assert r.headers["content-disposition"].startswith("attachment") and "local file" in page
+    assert up("/projects/1/upload", "p.pdf", b"%PDF-1.4 x").status_code == 303
+    assert up("/projects/1/upload", "fake.pdf", b"nope").status_code == 422
+    assert up("/ideas/1/upload", "evil.exe", b"MZ").status_code == 422
+    assert up("/ideas/9/upload", "a.md", b"x").status_code == 404
+    assert client.post("/ideas/1/upload", files={"file": ("a.md", b"x")}).status_code == 403   # csrf
+    assert client.get("/docs/0000000000000000/x.md").status_code == 404
+    assert client.get("/docs/../x.md").status_code in (404, 422)
+    # still no arbitrary schemes or paths
+    for bad in ("javascript:1", "ftp://x", "/etc/passwd", "/docs/0123456789abcdef/../../x.md"):
+        assert client.post("/ideas/1/sources", data={"url": bad, "csrf": csrf}).status_code == 422
+    client.cookies.clear()
+    assert client.get(href, follow_redirects=False).status_code == 303
+
+
+def test_history_page(client):
+    from app import athena_mcp  # noqa: F401
+    csrf = login(client)
+    assert "No agent changes yet" in client.get("/history").text
+    con = db.connect(app.state.db_path)
+    db.log_change(con, "add", "idea", 1, "create_idea", "Graph <b>RAG</b>", idea_id=1)
+    db.log_change(con, "update", "project", 2, "update_project", "Thesis", "changed: name", project_id=2)
+    t = client.get("/history").text
+    assert "Graph &lt;b&gt;RAG&lt;/b&gt;" in t and "Thesis" in t
+    t = client.get("/history?action=update&type=project").text
+    assert "Thesis" in t and "RAG" not in t
+    assert "RAG" not in client.get("/history?type=note").text
+    assert client.get("/history?page=x").status_code == 422
+    client.cookies.clear()
+    assert client.get("/history", follow_redirects=False).status_code == 303

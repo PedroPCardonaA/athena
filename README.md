@@ -10,7 +10,8 @@ A tiny, private vault for your PhD/research ideas, the sources behind each idea,
 - **Secure by default**: read-only container, no capabilities, argon2 password, CSRF, strict CSP. See [SECURITY.md](SECURITY.md).
 - **Yours**: full JSON export/import, BibTeX export/import, `make backup`.
 - **Agent-friendly**: a full MCP server (read, add, change; summarize and improve prompts) that installs with one command ([docs/mcp.md](docs/mcp.md), [AGENTS.md](AGENTS.md)).
-- **Citations everywhere**: sources per idea and per project; a project page rolls them all up with clickable links, BibTeX in/out.
+- **Citations everywhere**: sources per idea and per project; a project page rolls them all up with clickable links, BibTeX in/out. Upload local `.md`/`.txt`/`.pdf` documents as sources (stored in `data/docs`).
+- **Agent history**: the **History** page lists everything an agent added or changed through MCP, filterable by action and type.
 
 ## Quickstart
 Requires `podman` and `podman-compose`.
@@ -38,6 +39,7 @@ Then ask your agent things like *"summarize my PhD Thesis project"*, *"research 
 | Backup (consistent) | `make backup` → `data/backups/` |
 | Restore | stop the app, `make restore FILE=data/backups/<file>.db`, start |
 | Move/share ideas | UI → **Settings → Agent access** page → *Export* / *Import* (JSON) |
+| Local documents | uploaded files live in `data/docs/`; `make backup` copies only the database, so back up that folder too |
 | Citations | idea page → BibTeX → download `.bib` or paste entries to import |
 | Upgrade | `podman-compose pull && podman-compose up -d` (schema migrates automatically; back up first) |
 
